@@ -1,7 +1,7 @@
 {
-  "package_id": "com.example.g2demo",
+  "package_id": "com.loopermallee.whateven",
   "edition": "202601",
-  "name": "G2 Demo",
+  "name": "What Even",
   "version": "0.1.0",
   "min_app_version": "2.0.0",
   "min_sdk_version": "0.0.7",
@@ -9,7 +9,7 @@
   "permissions": [
     {
       "name": "network",
-      "desc": "This app needs to access the network in order to ..."
+      "desc": "This app uses network access for local development and future online data."
     }
   ],
   "supported_languages": [
