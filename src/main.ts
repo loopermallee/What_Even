@@ -5,7 +5,10 @@ import {
   waitForEvenAppBridge,
   type EvenHubEvent,
 } from '@evenrealities/even_hub_sdk';
-import { CodecGlassesController } from './codecGlassesController';
+import {
+  CodecGlassesController,
+  type CodecCallerProfile,
+} from './codecGlassesController';
 import { getCodecAssetBytes, type CodecAssetKey } from './codecGlassesAssets';
 import {
   InteractionFeedbackManager,
@@ -162,11 +165,10 @@ const INTERACTION_LABELS: Record<RawInteractionType, string> = {
 const GLASSES_CONTAINERS = {
   portraitImage: { id: 101, name: 'codec-face' },
   dialogueText: { id: 102, name: 'codec-dialog' },
-  statusText: { id: 103, name: 'codec-status' },
+  statusList: { id: 103, name: 'codec-status' },
 } as const;
 
-const STARTUP_DIALOGUE_CONTENT = ['140.85', 'OTACON', 'Incoming Codec', 'Tap to answer'].join('\n');
-const STARTUP_ACTION_CONTENT = '> Answer\nIgnore';
+const STARTUP_ACTION_ITEMS = ['Answer', 'Ignore'];
 
 type EventBranchSource = 'listEvent' | 'textEvent' | 'sysEvent' | 'unknown';
 
@@ -189,6 +191,7 @@ const DEVICE_PAGE_LIFECYCLE_KEY = 'what-even:device-page-lifecycle';
 let hasLoggedUnknownEventDump = false;
 const lastListIndexByContainer = new Map<string, number>();
 const glassesCodec = new CodecGlassesController();
+syncCodecCallerProfile();
 let lastRenderedPortraitAsset: CodecAssetKey | null = null;
 let imageUpdateQueue = Promise.resolve();
 let devicePageLifecycleState: DevicePageLifecycleState = readDevicePageLifecycleState();
@@ -201,6 +204,40 @@ function log(message: string) {
 
 function getCurrentContact() {
   return contacts[currentContactIndex];
+}
+
+function getCodecPortraitAssetForContact(
+  contact: Contact
+): 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake' {
+  if (contact.name === 'Colonel') {
+    return 'portrait-colonel';
+  }
+
+  if (contact.name === 'Meryl') {
+    return 'portrait-meryl';
+  }
+
+  if (contact.name === 'Otacon') {
+    return 'portrait-otacon';
+  }
+
+  return 'portrait-snake';
+}
+
+function buildCallerProfileFromContact(contact: Contact): CodecCallerProfile {
+  return {
+    name: contact.name,
+    frequency: contact.frequency,
+    portraitAsset: getCodecPortraitAssetForContact(contact),
+    script: contact.dialogue.map((line) => ({
+      speaker: (line.speaker === 'left' ? contact.name : RIGHT_CHARACTER.name).toUpperCase(),
+      text: line.text,
+    })),
+  };
+}
+
+function syncCodecCallerProfile() {
+  glassesCodec.setCallerProfile(buildCallerProfileFromContact(getCurrentContact()));
 }
 
 function getCurrentLine() {
@@ -264,36 +301,7 @@ function getSpeakerName(side: SpeakerSide) {
 }
 
 function getGlassesDialogueText() {
-  return STARTUP_DIALOGUE_CONTENT;
-}
-
-function getGlassesStatusText() {
-  const view = glassesCodec.getViewModel();
-  if (view.screen === 'incoming') {
-    return buildIncomingActionText(view.status);
-  }
-
-  return STARTUP_ACTION_CONTENT;
-}
-
-function buildIncomingActionText(status: string) {
-  const choices = status
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.includes('ANSWER') || line.includes('IGNORE'))
-    .slice(0, 2)
-    .map((line) => {
-      const selected = line.startsWith('>');
-      const cleaned = line.replace(/^>?\s*/, '').toLowerCase();
-      const title = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-      return selected ? `> ${title}` : title;
-    });
-
-  if (choices.length === 2) {
-    return choices.join('\n');
-  }
-
-  return STARTUP_ACTION_CONTENT;
+  return glassesCodec.getViewModel().dialogue;
 }
 
 type BridgePagePayload = {
@@ -306,6 +314,12 @@ type BridgePagePayload = {
     width?: number;
     height?: number;
     isEventCapture?: number;
+    itemContainer?: {
+      itemCount?: number;
+      itemName?: string[];
+      itemWidth?: number;
+      isItemSelectBorderEn?: number;
+    };
   }>;
   textObject?: Array<{
     containerID?: number;
@@ -340,28 +354,20 @@ function buildDialogueContainer(content: string) {
   };
 }
 
-function buildMinimalStartupCaptureTextContainer(content: string) {
+function buildStatusListContainer() {
   return {
     xPosition: 132,
     yPosition: 182,
     width: 190,
     height: 72,
-    containerID: GLASSES_CONTAINERS.statusText.id,
-    containerName: GLASSES_CONTAINERS.statusText.name,
-    content,
-    isEventCapture: 1,
-  };
-}
-
-function buildStatusContainer(content: string) {
-  return {
-    xPosition: 132,
-    yPosition: 182,
-    width: 190,
-    height: 72,
-    containerID: GLASSES_CONTAINERS.statusText.id,
-    containerName: GLASSES_CONTAINERS.statusText.name,
-    content,
+    containerID: GLASSES_CONTAINERS.statusList.id,
+    containerName: GLASSES_CONTAINERS.statusList.name,
+    itemContainer: {
+      itemCount: STARTUP_ACTION_ITEMS.length,
+      itemName: STARTUP_ACTION_ITEMS,
+      itemWidth: 0,
+      isItemSelectBorderEn: 1,
+    },
     isEventCapture: 1,
   };
 }
@@ -381,27 +387,23 @@ function buildStartContainer(): BridgePagePayload {
   return {
     containerTotalNum: 3,
     imageObject: [buildPortraitImageContainer()],
-    textObject: [
-      buildDialogueContainer(STARTUP_DIALOGUE_CONTENT),
-      buildStatusContainer(STARTUP_ACTION_CONTENT),
-    ],
+    textObject: [buildDialogueContainer(getGlassesDialogueText())],
+    listObject: [buildStatusListContainer()],
   };
 }
 
 function buildMinimalStartContainer(): BridgePagePayload {
   return {
     containerTotalNum: 1,
-    textObject: [buildMinimalStartupCaptureTextContainer(STARTUP_ACTION_CONTENT)],
+    listObject: [buildStatusListContainer()],
   };
 }
 
 function buildTextOnlyRebuildContainer(): BridgePagePayload {
   return {
     containerTotalNum: 2,
-    textObject: [
-      buildDialogueContainer(STARTUP_DIALOGUE_CONTENT),
-      buildStatusContainer(STARTUP_ACTION_CONTENT),
-    ],
+    textObject: [buildDialogueContainer(getGlassesDialogueText())],
+    listObject: [buildStatusListContainer()],
   };
 }
 
@@ -409,10 +411,8 @@ function buildRebuildContainer(): BridgePagePayload {
   return {
     containerTotalNum: 3,
     imageObject: [buildPortraitImageContainer()],
-    textObject: [
-      buildDialogueContainer(STARTUP_DIALOGUE_CONTENT),
-      buildStatusContainer(STARTUP_ACTION_CONTENT),
-    ],
+    textObject: [buildDialogueContainer(getGlassesDialogueText())],
+    listObject: [buildStatusListContainer()],
   };
 }
 
@@ -427,6 +427,14 @@ function describeBridgePayload(payload: BridgePagePayload) {
       width: item.width,
       height: item.height,
       isEventCapture: item.isEventCapture ?? 0,
+      itemContainer: item.itemContainer
+        ? {
+          itemCount: item.itemContainer.itemCount,
+          itemWidth: item.itemContainer.itemWidth,
+          isItemSelectBorderEn: item.itemContainer.isItemSelectBorderEn,
+          itemName: item.itemContainer.itemName,
+        }
+        : undefined,
     })),
     textObject: (payload.textObject ?? []).map((item) => ({
       containerID: item.containerID,
@@ -450,10 +458,13 @@ function describeBridgePayload(payload: BridgePagePayload) {
 }
 
 function getDebugPayloadMeta(payload: BridgePagePayload) {
-  const captureContainer = (payload.textObject ?? []).find((item) => item.isEventCapture === 1)?.containerName ?? 'none';
+  const captureText = (payload.textObject ?? []).find((item) => item.isEventCapture === 1)?.containerName ?? null;
+  const captureList = (payload.listObject ?? []).find((item) => item.isEventCapture === 1)?.containerName ?? null;
+  const captureContainer = captureText ?? captureList ?? 'none';
   return {
     captureContainer,
     textContainerNames: (payload.textObject ?? []).map((item) => item.containerName),
+    listContainerNames: (payload.listObject ?? []).map((item) => item.containerName),
     imageContainerNames: (payload.imageObject ?? []).map((item) => item.containerName),
   };
 }
@@ -469,6 +480,14 @@ function toBridgePayload(payload: BridgePagePayload): BridgePagePayload {
       width: item.width,
       height: item.height,
       isEventCapture: item.isEventCapture,
+      itemContainer: item.itemContainer
+        ? {
+          itemCount: item.itemContainer.itemCount,
+          itemWidth: item.itemContainer.itemWidth,
+          isItemSelectBorderEn: item.itemContainer.isItemSelectBorderEn,
+          itemName: item.itemContainer.itemName,
+        }
+        : undefined,
     })),
     textObject: (payload.textObject ?? []).map((item) => ({
       containerID: item.containerID,
@@ -798,17 +817,8 @@ async function syncTextToEven(silent = false) {
       content: getGlassesDialogueText(),
     };
 
-    const statusUpdate = {
-      containerID: GLASSES_CONTAINERS.statusText.id,
-      containerName: GLASSES_CONTAINERS.statusText.name,
-      contentOffset: 0,
-      contentLength: 1000,
-      content: getGlassesStatusText(),
-    };
-
     const dialogueOk = await bridge.textContainerUpgrade(dialogueUpdate as any);
-    const statusOk = await bridge.textContainerUpgrade(statusUpdate as any);
-    const ok = dialogueOk && statusOk;
+    const ok = dialogueOk;
 
     if (!silent) {
       log(ok ? 'Text synced to Even.' : 'Text sync failed.');
@@ -1203,6 +1213,13 @@ function buildListContainerKey(inspection: InputInspection) {
   return `${inspection.source}|${idPart}|name:${namePart}`;
 }
 
+function isCodecStatusContainer(inspection: InputInspection) {
+  return (
+    inspection.containerID === GLASSES_CONTAINERS.statusList.id ||
+    inspection.containerName === GLASSES_CONTAINERS.statusList.name
+  );
+}
+
 function getMovementFromListIndex(
   inspection: InputInspection
 ): NormalizedInput | null {
@@ -1215,7 +1232,8 @@ function getMovementFromListIndex(
     return null;
   }
 
-  const prev = lastListIndexByContainer.get(key);
+  const prev = lastListIndexByContainer.get(key)
+    ?? (isCodecStatusContainer(inspection) ? 0 : undefined);
   lastListIndexByContainer.set(key, inspection.currentSelectItemIndex);
 
   if (prev === undefined || prev === inspection.currentSelectItemIndex) {
@@ -1308,10 +1326,69 @@ function normalizeInputFromTypeToken(
   return null;
 }
 
+function isBoundaryToken(token: string) {
+  return (
+    token === 'SCROLL_TOP_EVENT' ||
+    token === 'SCROLL_TOP' ||
+    token === 'REACHED_TOP_EVENT' ||
+    token === 'AT_TOP_EVENT' ||
+    token === 'SCROLL_BOTTOM_EVENT' ||
+    token === 'SCROLL_BOTTOM' ||
+    token === 'REACHED_BOTTOM_EVENT' ||
+    token === 'AT_BOTTOM_EVENT'
+  );
+}
+
+function isListTapToken(token: string) {
+  return (
+    token === 'CLICK_EVENT' ||
+    token === 'CLICK' ||
+    token === 'SINGLE_CLICK_EVENT' ||
+    token === 'SINGLE_CLICK' ||
+    token === 'ENTER_EVENT' ||
+    token === 'ENTER' ||
+    token === 'TAP_EVENT' ||
+    token === 'TAP' ||
+    token === 'SELECT_EVENT' ||
+    token === 'SELECT' ||
+    token === 'CONFIRM_EVENT' ||
+    token === 'CONFIRM' ||
+    token === 'OK_EVENT' ||
+    token === 'OK' ||
+    token === 'UNKNOWN_EVENT'
+  );
+}
+
 function normalizeInput(inspection: InputInspection): NormalizedInput | null {
   const movementFromIndex = getMovementFromListIndex(inspection);
   if (movementFromIndex) {
     return movementFromIndex;
+  }
+
+  if (inspection.source === 'listEvent') {
+    const tokens = inspection.eventTypeCandidates.length > 0
+      ? inspection.eventTypeCandidates
+      : [inspection.normalizedTypeToken];
+
+    if (tokens.some((token) => isBoundaryToken(token))) {
+      return normalizeInputFromTypeToken(inspection);
+    }
+
+    if (tokens.some((token) =>
+      token === 'DOUBLE_CLICK_EVENT' ||
+      token === 'DOUBLE_CLICK' ||
+      token === 'DOUBLE_TAP_EVENT' ||
+      token === 'DOUBLE_TAP' ||
+      token === 'DOUBLE_ENTER_EVENT')) {
+      return 'DOUBLE_TAP';
+    }
+
+    if (
+      (inspection.currentSelectItemName !== null || inspection.currentSelectItemIndex !== null) &&
+      tokens.some((token) => isListTapToken(token))
+    ) {
+      return 'TAP';
+    }
   }
 
   return normalizeInputFromTypeToken(inspection);
@@ -1406,11 +1483,16 @@ function handleEvenHubEvent(event: EvenHubEvent) {
   for (const branch of branches) {
     const inspection = inspectInputEvent(branch.source, branch.payload, event);
     const containerKey = buildListContainerKey(inspection);
-    const prevIndex = containerKey ? lastListIndexByContainer.get(containerKey) : undefined;
+    const prevIndex = containerKey
+      ? (
+        lastListIndexByContainer.get(containerKey)
+        ?? (isCodecStatusContainer(inspection) ? 0 : undefined)
+      )
+      : undefined;
 
     const logParts = [
       `Input source: ${inspection.source}`,
-      `eventType: ${inspection.rawEventTypeName}`,
+      `rawEventType: ${inspection.rawEventTypeName}`,
       `containerID: ${inspection.containerID ?? '-'}`,
       `containerName: ${inspection.containerName ?? '-'}`,
     ];
@@ -1443,8 +1525,18 @@ function handleEvenHubEvent(event: EvenHubEvent) {
     }
 
     if (normalizedInput === 'AT_TOP' || normalizedInput === 'AT_BOTTOM') {
-      log(`Boundary event: ${inspection.rawEventTypeName} | normalized: ${normalizedInput}`);
+      log(`${logParts.join(' | ')} | normalized: ${normalizedInput}`);
       continue;
+    }
+
+    if (inspection.source === 'listEvent') {
+      if (inspection.currentSelectItemIndex !== null) {
+        glassesCodec.setIncomingChoiceByIndex(inspection.currentSelectItemIndex);
+      }
+
+      if (inspection.currentSelectItemName) {
+        glassesCodec.setIncomingChoiceByName(inspection.currentSelectItemName);
+      }
     }
 
     log(`${logParts.join(' | ')} | normalized: ${normalizedInput}`);
@@ -1473,20 +1565,30 @@ function setupEvenHubEventListener() {
   });
 
   lastListIndexByContainer.clear();
+  lastListIndexByContainer.set(
+    `listEvent|id:${GLASSES_CONTAINERS.statusList.id}|name:${GLASSES_CONTAINERS.statusList.name}`,
+    0
+  );
   log('Input listener ready (UP/DOWN/TAP/DOUBLE TAP).');
 }
 
 function logEventCaptureSummary() {
   const container = buildStartContainer();
   const textObjects = container.textObject ?? [];
+  const listObjects = container.listObject ?? [];
   const imageObjects = container.imageObject ?? [];
   const captureTextContainers = textObjects.filter(
     (item) => item.isEventCapture === 1
   );
-  const captureNames = captureTextContainers.map((item) => item.containerName).join(', ');
+  const captureListContainers = listObjects.filter(
+    (item) => item.isEventCapture === 1
+  );
+  const captureNames = [...captureTextContainers, ...captureListContainers]
+    .map((item) => item.containerName)
+    .join(', ');
 
   log(
-    `Event capture summary: total=${container.containerTotalNum ?? '-'}, images=${imageObjects.length}, text=${textObjects.length}, captureCount=${captureTextContainers.length}, capture=${captureNames || 'none'}`
+    `Event capture summary: total=${container.containerTotalNum ?? '-'}, images=${imageObjects.length}, text=${textObjects.length}, list=${listObjects.length}, captureCount=${captureTextContainers.length + captureListContainers.length}, capture=${captureNames || 'none'}`
   );
 }
 
@@ -1496,6 +1598,7 @@ async function startOnEven(options?: { forceReset?: boolean }) {
   try {
     bridge = await waitForEvenAppBridge();
     log('Bridge connected.');
+    syncCodecCallerProfile();
     hasStarted = false;
     const forceReset = Boolean(options?.forceReset && import.meta.env.DEV);
     log(
@@ -1557,6 +1660,7 @@ async function startCall() {
     return;
   }
 
+  syncCodecCallerProfile();
   callActive = true;
   currentLineIndex = 0;
   log(`Call started with ${getCurrentContact().name}.`);
@@ -1610,6 +1714,7 @@ async function changeContact(direction: -1 | 1) {
   currentContactIndex =
     (currentContactIndex + direction + contacts.length) % contacts.length;
 
+  syncCodecCallerProfile();
   displayedDialogueText = '';
   log(`Selected contact: ${getCurrentContact().name}.`);
   renderCodec();

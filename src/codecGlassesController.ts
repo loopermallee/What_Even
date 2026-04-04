@@ -9,12 +9,19 @@ type DialogueStep = {
   text: string;
 };
 
-const SCRIPT: DialogueStep[] = [
+const DEFAULT_SCRIPT: DialogueStep[] = [
   { speaker: 'OTACON', text: 'Snake, signal check. You are readable.' },
   { speaker: 'SNAKE', text: 'I hear you. Keep this line tight.' },
   { speaker: 'OTACON', text: 'Patrol shifted. Corridor west is open.' },
   { speaker: 'SNAKE', text: 'Copy. Moving now. Stay on codec.' },
 ];
+
+export type CodecCallerProfile = {
+  name: string;
+  frequency: string;
+  portraitAsset: 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
+  script: DialogueStep[];
+};
 
 export type CodecViewModel = {
   screen: CodecScreen;
@@ -23,7 +30,7 @@ export type CodecViewModel = {
   dialogue: string;
   status: string;
   frameAsset: 'frame-incoming' | 'frame-active' | 'frame-ended';
-  portraitAsset: 'portrait-otacon' | 'portrait-snake';
+  portraitAsset: 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
 };
 
 export type CodecInputResult = {
@@ -35,19 +42,50 @@ export class CodecGlassesController {
   private screen: CodecScreen = 'incoming';
   private incomingChoice: IncomingChoice = 'answer';
   private activeIndex = 0;
-  private readonly frequency = '140.85';
+  private callerProfile: CodecCallerProfile = {
+    name: 'Otacon',
+    frequency: '140.85',
+    portraitAsset: 'portrait-otacon',
+    script: DEFAULT_SCRIPT,
+  };
+
+  setCallerProfile(profile: CodecCallerProfile) {
+    this.callerProfile = {
+      ...profile,
+      script: profile.script.length > 0 ? profile.script : DEFAULT_SCRIPT,
+    };
+    this.activeIndex = 0;
+  }
+
+  setIncomingChoiceByIndex(index: number) {
+    this.incomingChoice = index <= 0 ? 'answer' : 'ignore';
+  }
+
+  setIncomingChoiceByName(itemName: string) {
+    const normalized = itemName.trim().toLowerCase();
+    if (normalized === 'answer') {
+      this.incomingChoice = 'answer';
+      return;
+    }
+
+    if (normalized === 'ignore') {
+      this.incomingChoice = 'ignore';
+    }
+  }
 
   getViewModel(): CodecViewModel {
+    const callerNameUpper = this.callerProfile.name.toUpperCase();
+
     if (this.screen === 'incoming') {
       const choiceAnswer = this.incomingChoice === 'answer' ? '> ANSWER' : '  ANSWER';
       const choiceIgnore = this.incomingChoice === 'ignore' ? '> IGNORE' : '  IGNORE';
 
       return {
         screen: 'incoming',
-        frequency: this.frequency,
-        speaker: 'OTACON',
+        frequency: this.callerProfile.frequency,
+        speaker: callerNameUpper,
         dialogue: this.wrapText(
-          ['INCOMING CODEC', `FREQ ${this.frequency}`, 'OTACON LINK REQUEST'].join('\n'),
+          ['INCOMING CODEC', `FREQ ${this.callerProfile.frequency}`, `${callerNameUpper} LINK REQUEST`].join('\n'),
           26,
           4
         ),
@@ -57,15 +95,16 @@ export class CodecGlassesController {
           4
         ),
         frameAsset: 'frame-incoming',
-        portraitAsset: 'portrait-otacon',
+        portraitAsset: this.callerProfile.portraitAsset,
       };
     }
 
     if (this.screen === 'active') {
-      const step = SCRIPT[this.activeIndex] ?? SCRIPT[0];
+      const script = this.callerProfile.script;
+      const step = script[this.activeIndex] ?? script[0] ?? DEFAULT_SCRIPT[0];
       return {
         screen: 'active',
-        frequency: this.frequency,
+        frequency: this.callerProfile.frequency,
         speaker: step.speaker,
         dialogue: this.wrapText(
           [`${step.speaker}`, `${step.text}`].join('\n'),
@@ -73,21 +112,23 @@ export class CodecGlassesController {
           4
         ),
         status: this.wrapText(
-          [`FREQ ${this.frequency}  LINKED`, 'TAP=NEXT  DTAP=END'].join('\n'),
+          [`FREQ ${this.callerProfile.frequency}  LINKED`, 'TAP=NEXT  DTAP=END'].join('\n'),
           30,
           4
         ),
         frameAsset: 'frame-active',
-        portraitAsset: step.speaker === 'SNAKE' ? 'portrait-snake' : 'portrait-otacon',
+        portraitAsset: step.speaker === 'SNAKE'
+          ? 'portrait-snake'
+          : this.callerProfile.portraitAsset,
       };
     }
 
     return {
       screen: 'ended',
-      frequency: this.frequency,
+      frequency: this.callerProfile.frequency,
       speaker: 'SYSTEM',
       dialogue: this.wrapText(
-        ['CONNECTION LOST', `${this.frequency} CLOSED`].join('\n'),
+        ['CONNECTION LOST', `${this.callerProfile.frequency} CLOSED`].join('\n'),
         26,
         4
       ),
@@ -97,7 +138,7 @@ export class CodecGlassesController {
         4
       ),
       frameAsset: 'frame-ended',
-      portraitAsset: 'portrait-otacon',
+      portraitAsset: this.callerProfile.portraitAsset,
     };
   }
 
@@ -108,7 +149,6 @@ export class CodecGlassesController {
 
     if (this.screen === 'incoming') {
       if (input === 'UP' || input === 'DOWN') {
-        this.incomingChoice = this.incomingChoice === 'answer' ? 'ignore' : 'answer';
         return { changed: true, requestClose: false };
       }
 
@@ -129,7 +169,8 @@ export class CodecGlassesController {
 
     if (this.screen === 'active') {
       if (input === 'TAP') {
-        if (this.activeIndex < SCRIPT.length - 1) {
+        const scriptLength = this.callerProfile.script.length;
+        if (this.activeIndex < scriptLength - 1) {
           this.activeIndex += 1;
         } else {
           this.screen = 'ended';

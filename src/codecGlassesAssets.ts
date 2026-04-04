@@ -2,6 +2,8 @@ export type CodecAssetKey =
   | 'frame-incoming'
   | 'frame-active'
   | 'frame-ended'
+  | 'portrait-colonel'
+  | 'portrait-meryl'
   | 'portrait-otacon'
   | 'portrait-snake';
 
@@ -33,7 +35,7 @@ function frameSvg(mode: 'incoming' | 'active' | 'ended') {
 </svg>`;
 }
 
-function portraitSvg(label: 'OT' | 'SN') {
+function portraitSvg(label: string) {
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
   <rect width="96" height="96" fill="#06130d"/>
@@ -60,6 +62,14 @@ function getAssetDefinition(key: CodecAssetKey): AssetDefinition {
 
   if (key === 'portrait-snake') {
     return { width: 96, height: 96, svg: portraitSvg('SN') };
+  }
+
+  if (key === 'portrait-colonel') {
+    return { width: 96, height: 96, svg: portraitSvg('CO') };
+  }
+
+  if (key === 'portrait-meryl') {
+    return { width: 96, height: 96, svg: portraitSvg('MR') };
   }
 
   return { width: 96, height: 96, svg: portraitSvg('OT') };
