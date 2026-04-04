@@ -3,12 +3,7 @@ import {
   ImageRawDataUpdateResult,
   OsEventTypeList,
   waitForEvenAppBridge,
-  type CreateStartUpPageContainer,
   type EvenHubEvent,
-  type ImageContainerProperty,
-  type RebuildPageContainer,
-  type TextContainerProperty,
-  type TextContainerUpgrade,
 } from '@evenrealities/even_hub_sdk';
 import { CodecGlassesController } from './codecGlassesController';
 import { getCodecAssetBytes, type CodecAssetKey } from './codecGlassesAssets';
@@ -84,6 +79,10 @@ if (!app) {
   throw new Error('Missing #app root element');
 }
 
+const devResetButtonHtml = import.meta.env.DEV
+  ? '<button id="resetStartupBtn">Reset Glasses UI</button>'
+  : '';
+
 app.innerHTML = `
   <div class="wrap">
     <h1>What Even</h1>
@@ -97,6 +96,7 @@ app.innerHTML = `
         <button id="startCallBtn" disabled>Start Call</button>
         <button id="nextLineBtn" disabled>Next Line</button>
         <button id="endCallBtn" disabled>End Call</button>
+        ${devResetButtonHtml}
         <button id="copyLogBtn">Copy Log</button>
         <button id="clearLogBtn">Clear Log</button>
       </div>
@@ -113,31 +113,26 @@ app.innerHTML = `
   </div>
 `;
 
-const startEvenBtn = document.querySelector<HTMLButtonElement>('#startEvenBtn');
-const prevContactBtn = document.querySelector<HTMLButtonElement>('#prevContactBtn');
-const nextContactBtn = document.querySelector<HTMLButtonElement>('#nextContactBtn');
-const startCallBtn = document.querySelector<HTMLButtonElement>('#startCallBtn');
-const nextLineBtn = document.querySelector<HTMLButtonElement>('#nextLineBtn');
-const endCallBtn = document.querySelector<HTMLButtonElement>('#endCallBtn');
-const copyLogBtn = document.querySelector<HTMLButtonElement>('#copyLogBtn');
-const clearLogBtn = document.querySelector<HTMLButtonElement>('#clearLogBtn');
-const codecMount = document.querySelector<HTMLDivElement>('#codecMount');
-const logEl = document.querySelector<HTMLPreElement>('#log');
+function mustQuery<T extends Element>(selector: string) {
+  const element = document.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`Missing required UI element: ${selector}`);
+  }
 
-if (
-  !startEvenBtn ||
-  !prevContactBtn ||
-  !nextContactBtn ||
-  !startCallBtn ||
-  !nextLineBtn ||
-  !endCallBtn ||
-  !copyLogBtn ||
-  !clearLogBtn ||
-  !codecMount ||
-  !logEl
-) {
-  throw new Error('Missing required UI elements');
+  return element;
 }
+
+const startEvenBtn = mustQuery<HTMLButtonElement>('#startEvenBtn');
+const prevContactBtn = mustQuery<HTMLButtonElement>('#prevContactBtn');
+const nextContactBtn = mustQuery<HTMLButtonElement>('#nextContactBtn');
+const startCallBtn = mustQuery<HTMLButtonElement>('#startCallBtn');
+const nextLineBtn = mustQuery<HTMLButtonElement>('#nextLineBtn');
+const endCallBtn = mustQuery<HTMLButtonElement>('#endCallBtn');
+const resetStartupBtn = document.querySelector<HTMLButtonElement>('#resetStartupBtn');
+const copyLogBtn = mustQuery<HTMLButtonElement>('#copyLogBtn');
+const clearLogBtn = mustQuery<HTMLButtonElement>('#clearLogBtn');
+const codecMount = mustQuery<HTMLDivElement>('#codecMount');
+const logEl = mustQuery<HTMLPreElement>('#log');
 
 let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null;
 let hasStarted = false;
@@ -164,19 +159,14 @@ const INTERACTION_LABELS: Record<RawInteractionType, string> = {
   double_click: 'DOUBLE TAP',
 };
 
-const GLASSES_ICON_TEXT: Record<RawInteractionType, string> = {
-  up: '^',
-  down: 'v',
-  click: 'o',
-  double_click: 'oo',
-};
-
 const GLASSES_CONTAINERS = {
-  frameImage: { id: 101, name: 'codec-frame' },
-  portraitImage: { id: 102, name: 'codec-face' },
-  dialogueText: { id: 103, name: 'codec-dialog' },
-  statusText: { id: 104, name: 'codec-status' },
+  portraitImage: { id: 101, name: 'codec-face' },
+  dialogueText: { id: 102, name: 'codec-dialog' },
+  statusText: { id: 103, name: 'codec-status' },
 } as const;
+
+const STARTUP_DIALOGUE_CONTENT = ['140.85', 'OTACON', 'Incoming Codec', 'Tap to answer'].join('\n');
+const STARTUP_ACTION_CONTENT = '> Answer\nIgnore';
 
 type EventBranchSource = 'listEvent' | 'textEvent' | 'sysEvent' | 'unknown';
 
@@ -194,13 +184,14 @@ type InputInspection = {
   eventTypeCandidates: string[];
 };
 
-const STARTUP_CONTAINER_READY_KEY = 'what-even:startup-container-ready';
+type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
+const DEVICE_PAGE_LIFECYCLE_KEY = 'what-even:device-page-lifecycle';
 let hasLoggedUnknownEventDump = false;
 const lastListIndexByContainer = new Map<string, number>();
 const glassesCodec = new CodecGlassesController();
-let lastRenderedFrameAsset: CodecAssetKey | null = null;
 let lastRenderedPortraitAsset: CodecAssetKey | null = null;
 let imageUpdateQueue = Promise.resolve();
+let devicePageLifecycleState: DevicePageLifecycleState = readDevicePageLifecycleState();
 
 function log(message: string) {
   const time = new Date().toLocaleTimeString();
@@ -228,20 +219,26 @@ function debugInteractionLog(message: string) {
   log(`[interaction-debug] ${message}`);
 }
 
-function readStartupContainerReadyFlag() {
+function writeDevicePageLifecycleState(value: DevicePageLifecycleState) {
+  devicePageLifecycleState = value;
   try {
-    return localStorage.getItem(STARTUP_CONTAINER_READY_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeStartupContainerReadyFlag(value: boolean) {
-  try {
-    localStorage.setItem(STARTUP_CONTAINER_READY_KEY, value ? '1' : '0');
+    localStorage.setItem(DEVICE_PAGE_LIFECYCLE_KEY, value);
   } catch {
     // no-op: storage may be unavailable in some webview environments
   }
+}
+
+function readDevicePageLifecycleState(): DevicePageLifecycleState {
+  try {
+    const value = localStorage.getItem(DEVICE_PAGE_LIFECYCLE_KEY);
+    if (value === 'active' || value === 'inactive' || value === 'unknown') {
+      return value;
+    }
+  } catch {
+    // no-op: storage may be unavailable in some webview environments
+  }
+
+  return 'unknown';
 }
 
 function getLatestFeedback() {
@@ -257,15 +254,6 @@ function getCurrentInteractionLabel() {
   return INTERACTION_LABELS[latest.interaction];
 }
 
-function getCurrentGlassesIndicator() {
-  const latest = getLatestFeedback();
-  if (!latest) {
-    return '--';
-  }
-
-  return GLASSES_ICON_TEXT[latest.interaction];
-}
-
 function isConversationFinished() {
   const contact = getCurrentContact();
   return callActive && currentLineIndex >= contact.dialogue.length - 1;
@@ -276,21 +264,75 @@ function getSpeakerName(side: SpeakerSide) {
 }
 
 function getGlassesDialogueText() {
-  return glassesCodec.getViewModel().dialogue;
+  return STARTUP_DIALOGUE_CONTENT;
 }
 
 function getGlassesStatusText() {
   const view = glassesCodec.getViewModel();
-  const interactionHint = `IN ${getCurrentGlassesIndicator()}`;
-  return [view.status, interactionHint].join('\n');
+  if (view.screen === 'incoming') {
+    return buildIncomingActionText(view.status);
+  }
+
+  return STARTUP_ACTION_CONTENT;
 }
 
-function buildDialogueContainer(content: string): TextContainerProperty {
+function buildIncomingActionText(status: string) {
+  const choices = status
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.includes('ANSWER') || line.includes('IGNORE'))
+    .slice(0, 2)
+    .map((line) => {
+      const selected = line.startsWith('>');
+      const cleaned = line.replace(/^>?\s*/, '').toLowerCase();
+      const title = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+      return selected ? `> ${title}` : title;
+    });
+
+  if (choices.length === 2) {
+    return choices.join('\n');
+  }
+
+  return STARTUP_ACTION_CONTENT;
+}
+
+type BridgePagePayload = {
+  containerTotalNum?: number;
+  listObject?: Array<{
+    containerID?: number;
+    containerName?: string;
+    xPosition?: number;
+    yPosition?: number;
+    width?: number;
+    height?: number;
+    isEventCapture?: number;
+  }>;
+  textObject?: Array<{
+    containerID?: number;
+    containerName?: string;
+    xPosition?: number;
+    yPosition?: number;
+    width?: number;
+    height?: number;
+    isEventCapture?: number;
+    content?: string;
+  }>;
+  imageObject?: Array<{
+    containerID?: number;
+    containerName?: string;
+    xPosition?: number;
+    yPosition?: number;
+    width?: number;
+    height?: number;
+  }>;
+};
+
+function buildDialogueContainer(content: string) {
   return {
     xPosition: 132,
-    yPosition: 18,
-    width: 430,
-    height: 112,
+    yPosition: 38,
+    width: 238,
+    height: 126,
     containerID: GLASSES_CONTAINERS.dialogueText.id,
     containerName: GLASSES_CONTAINERS.dialogueText.name,
     content,
@@ -298,12 +340,12 @@ function buildDialogueContainer(content: string): TextContainerProperty {
   };
 }
 
-function buildStatusContainer(content: string): TextContainerProperty {
+function buildMinimalStartupCaptureTextContainer(content: string) {
   return {
-    xPosition: 16,
-    yPosition: 136,
-    width: 544,
-    height: 116,
+    xPosition: 132,
+    yPosition: 182,
+    width: 190,
+    height: 72,
     containerID: GLASSES_CONTAINERS.statusText.id,
     containerName: GLASSES_CONTAINERS.statusText.name,
     content,
@@ -311,21 +353,23 @@ function buildStatusContainer(content: string): TextContainerProperty {
   };
 }
 
-function buildFrameImageContainer(): ImageContainerProperty {
+function buildStatusContainer(content: string) {
   return {
-    xPosition: 176,
-    yPosition: 20,
-    width: 200,
-    height: 100,
-    containerID: GLASSES_CONTAINERS.frameImage.id,
-    containerName: GLASSES_CONTAINERS.frameImage.name,
+    xPosition: 132,
+    yPosition: 182,
+    width: 190,
+    height: 72,
+    containerID: GLASSES_CONTAINERS.statusText.id,
+    containerName: GLASSES_CONTAINERS.statusText.name,
+    content,
+    isEventCapture: 1,
   };
 }
 
-function buildPortraitImageContainer(): ImageContainerProperty {
+function buildPortraitImageContainer() {
   return {
-    xPosition: 24,
-    yPosition: 22,
+    xPosition: 22,
+    yPosition: 42,
     width: 96,
     height: 96,
     containerID: GLASSES_CONTAINERS.portraitImage.id,
@@ -333,83 +377,121 @@ function buildPortraitImageContainer(): ImageContainerProperty {
   };
 }
 
-function buildStartContainer(): CreateStartUpPageContainer {
+function buildStartContainer(): BridgePagePayload {
   return {
-    containerTotalNum: 4,
-    imageObject: [buildFrameImageContainer(), buildPortraitImageContainer()],
+    containerTotalNum: 3,
+    imageObject: [buildPortraitImageContainer()],
     textObject: [
-      buildDialogueContainer(getGlassesDialogueText()),
-      buildStatusContainer(getGlassesStatusText()),
+      buildDialogueContainer(STARTUP_DIALOGUE_CONTENT),
+      buildStatusContainer(STARTUP_ACTION_CONTENT),
     ],
   };
 }
 
-function buildRebuildContainer(): RebuildPageContainer {
+function buildMinimalStartContainer(): BridgePagePayload {
   return {
-    containerTotalNum: 4,
-    imageObject: [buildFrameImageContainer(), buildPortraitImageContainer()],
+    containerTotalNum: 1,
+    textObject: [buildMinimalStartupCaptureTextContainer(STARTUP_ACTION_CONTENT)],
+  };
+}
+
+function buildTextOnlyRebuildContainer(): BridgePagePayload {
+  return {
+    containerTotalNum: 2,
     textObject: [
-      buildDialogueContainer(getGlassesDialogueText()),
-      buildStatusContainer(getGlassesStatusText()),
+      buildDialogueContainer(STARTUP_DIALOGUE_CONTENT),
+      buildStatusContainer(STARTUP_ACTION_CONTENT),
     ],
   };
 }
 
-function buildRebuildContainerVariant(options: {
-  includeFrameImage: boolean;
-  includePortraitImage: boolean;
-}): RebuildPageContainer {
-  const imageObject: ImageContainerProperty[] = [];
-
-  if (options.includeFrameImage) {
-    imageObject.push(buildFrameImageContainer());
-  }
-
-  if (options.includePortraitImage) {
-    imageObject.push(buildPortraitImageContainer());
-  }
-
+function buildRebuildContainer(): BridgePagePayload {
   return {
-    containerTotalNum: 2 + imageObject.length,
-    imageObject,
+    containerTotalNum: 3,
+    imageObject: [buildPortraitImageContainer()],
     textObject: [
-      buildDialogueContainer(getGlassesDialogueText()),
-      buildStatusContainer(getGlassesStatusText()),
+      buildDialogueContainer(STARTUP_DIALOGUE_CONTENT),
+      buildStatusContainer(STARTUP_ACTION_CONTENT),
     ],
   };
 }
 
-function describeRebuildPayload(payload: RebuildPageContainer) {
-  const textObject = (payload.textObject ?? []).map((item) => ({
-    containerID: item.containerID,
-    containerName: item.containerName,
-    xPosition: item.xPosition,
-    yPosition: item.yPosition,
-    width: item.width,
-    height: item.height,
-    isEventCapture: item.isEventCapture ?? 0,
-  }));
-
-  const imageObject = (payload.imageObject ?? []).map((item) => ({
-    containerID: item.containerID,
-    containerName: item.containerName,
-    xPosition: item.xPosition,
-    yPosition: item.yPosition,
-    width: item.width,
-    height: item.height,
-  }));
-
-  const captureContainer = textObject.find((item) => item.isEventCapture === 1)?.containerName ?? 'none';
-
+function describeBridgePayload(payload: BridgePagePayload) {
   return {
     containerTotalNum: payload.containerTotalNum ?? null,
-    textObject,
-    imageObject,
-    captureContainer,
+    listObject: (payload.listObject ?? []).map((item) => ({
+      containerID: item.containerID,
+      containerName: item.containerName,
+      xPosition: item.xPosition,
+      yPosition: item.yPosition,
+      width: item.width,
+      height: item.height,
+      isEventCapture: item.isEventCapture ?? 0,
+    })),
+    textObject: (payload.textObject ?? []).map((item) => ({
+      containerID: item.containerID,
+      containerName: item.containerName,
+      xPosition: item.xPosition,
+      yPosition: item.yPosition,
+      width: item.width,
+      height: item.height,
+      isEventCapture: item.isEventCapture ?? 0,
+      content: item.content,
+    })),
+    imageObject: (payload.imageObject ?? []).map((item) => ({
+      containerID: item.containerID,
+      containerName: item.containerName,
+      xPosition: item.xPosition,
+      yPosition: item.yPosition,
+      width: item.width,
+      height: item.height,
+    })),
   };
 }
 
-function validateRebuildPayload(payload: RebuildPageContainer) {
+function getDebugPayloadMeta(payload: BridgePagePayload) {
+  const captureContainer = (payload.textObject ?? []).find((item) => item.isEventCapture === 1)?.containerName ?? 'none';
+  return {
+    captureContainer,
+    textContainerNames: (payload.textObject ?? []).map((item) => item.containerName),
+    imageContainerNames: (payload.imageObject ?? []).map((item) => item.containerName),
+  };
+}
+
+function toBridgePayload(payload: BridgePagePayload): BridgePagePayload {
+  return {
+    containerTotalNum: payload.containerTotalNum,
+    listObject: (payload.listObject ?? []).map((item) => ({
+      containerID: item.containerID,
+      containerName: item.containerName,
+      xPosition: item.xPosition,
+      yPosition: item.yPosition,
+      width: item.width,
+      height: item.height,
+      isEventCapture: item.isEventCapture,
+    })),
+    textObject: (payload.textObject ?? []).map((item) => ({
+      containerID: item.containerID,
+      containerName: item.containerName,
+      xPosition: item.xPosition,
+      yPosition: item.yPosition,
+      width: item.width,
+      height: item.height,
+      isEventCapture: item.isEventCapture,
+      content: item.content,
+    })),
+    imageObject: (payload.imageObject ?? []).map((item) => ({
+      containerID: item.containerID,
+      containerName: item.containerName,
+      xPosition: item.xPosition,
+      yPosition: item.yPosition,
+      width: item.width,
+      height: item.height,
+    })),
+  };
+}
+
+function validateRebuildPayload(payload: BridgePagePayload) {
   const errors: string[] = [];
   const canvasWidth = 576;
   const canvasHeight = 288;
@@ -565,14 +647,15 @@ function validateRebuildPayload(payload: RebuildPageContainer) {
 
 async function attemptRebuild(
   label: string,
-  payload: RebuildPageContainer
+  payload: BridgePagePayload
 ) {
   if (!bridge) {
     return false;
   }
 
-  const payloadView = describeRebuildPayload(payload);
-  log(`Rebuild attempt (${label}) payload: ${safeSerialize(payloadView)}`);
+  const bridgePayload = toBridgePayload(payload);
+  log(`Rebuild attempt (${label}) bridge payload: ${safeSerialize(describeBridgePayload(bridgePayload))}`);
+  log(`Rebuild attempt (${label}) debug meta: ${safeSerialize(getDebugPayloadMeta(payload))}`);
   const validation = validateRebuildPayload(payload);
 
   if (!validation.valid) {
@@ -583,14 +666,121 @@ async function attemptRebuild(
     return false;
   }
 
-  const rebuilt = await bridge.rebuildPageContainer(payload as any);
+  const rebuilt = await bridge.rebuildPageContainer(bridgePayload as any);
+  log(`rebuild result (${label}): ${String(rebuilt)}`);
   if (rebuilt) {
-    log(`rebuildPageContainer result (${label}): true`);
+    writeDevicePageLifecycleState('active');
     return true;
   }
 
   log(`Rebuild failed after local validation passed (${label}).`);
-  log(`Attempted payload (${label}): ${safeSerialize(payloadView)}`);
+  log(`Attempted bridge payload (${label}): ${safeSerialize(describeBridgePayload(bridgePayload))}`);
+  return false;
+}
+
+async function attemptStartupCreate(
+  label: string,
+  payload: BridgePagePayload
+) {
+  if (!bridge) {
+    return -1;
+  }
+
+  const bridgePayload = toBridgePayload(payload);
+  log(`Startup create attempt (${label}) bridge payload: ${safeSerialize(describeBridgePayload(bridgePayload))}`);
+  log(`Startup create attempt (${label}) debug meta: ${safeSerialize(getDebugPayloadMeta(payload))}`);
+  const result = await bridge.createStartUpPageContainer(bridgePayload as any);
+  log(`startup create result (${label}): ${result}`);
+  return result;
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function shutdownGlassesPage(label: string) {
+  if (!bridge) {
+    return null;
+  }
+
+  log(`shutting down old page before creating/updating (${label})`);
+  const result = await bridge.shutDownPageContainer(0);
+  log(`shutdown result (${label}): ${String(result)}`);
+  writeDevicePageLifecycleState('inactive');
+  hasStarted = false;
+  return result;
+}
+
+async function resetGlassesPageAndCreateStartup() {
+  if (!bridge) {
+    return false;
+  }
+
+  log('startup page reset requested');
+  await shutdownGlassesPage('dev-reset');
+  await delay(140);
+  const startupCreateResult = await attemptStartupCreate(
+    'dev-reset:minimal-single-text',
+    buildMinimalStartContainer()
+  );
+
+  if (startupCreateResult === 0) {
+    writeDevicePageLifecycleState('active');
+    return true;
+  }
+
+  log('startup create failed after reset request');
+  if (startupCreateResult === 2) {
+    log('Result 2 = oversize request.');
+  } else if (startupCreateResult === 3) {
+    log('Result 3 = out of memory.');
+  } else if (startupCreateResult === 1) {
+    log('Result 1 = invalid request.');
+  }
+
+  return false;
+}
+
+async function ensureStartupPageLifecycle(options: { forceReset: boolean }) {
+  if (!bridge) {
+    return false;
+  }
+
+  if (options.forceReset) {
+    return resetGlassesPageAndCreateStartup();
+  }
+
+  if (devicePageLifecycleState === 'active') {
+    log('startup lifecycle: active page detected, skipping startup create and using rebuild.');
+    return true;
+  }
+
+  log('startup lifecycle: creating startup page for first launch.');
+  const startupCreateResult = await attemptStartupCreate(
+    'first-launch:minimal-single-text',
+    buildMinimalStartContainer()
+  );
+
+  if (startupCreateResult === 0) {
+    writeDevicePageLifecycleState('active');
+    return true;
+  }
+
+  if (startupCreateResult === 1) {
+    log('startup lifecycle: create returned invalid; likely stale active page exists, continuing with rebuild.');
+    writeDevicePageLifecycleState('active');
+    return true;
+  }
+
+  if (startupCreateResult === 2) {
+    log('Result 2 = oversize request.');
+  } else if (startupCreateResult === 3) {
+    log('Result 3 = out of memory.');
+  }
+
+  log('startup create failed in first-launch flow');
   return false;
 }
 
@@ -600,7 +790,7 @@ async function syncTextToEven(silent = false) {
   }
 
   try {
-    const dialogueUpdate: TextContainerUpgrade = {
+    const dialogueUpdate = {
       containerID: GLASSES_CONTAINERS.dialogueText.id,
       containerName: GLASSES_CONTAINERS.dialogueText.name,
       contentOffset: 0,
@@ -608,7 +798,7 @@ async function syncTextToEven(silent = false) {
       content: getGlassesDialogueText(),
     };
 
-    const statusUpdate: TextContainerUpgrade = {
+    const statusUpdate = {
       containerID: GLASSES_CONTAINERS.statusText.id,
       containerName: GLASSES_CONTAINERS.statusText.name,
       contentOffset: 0,
@@ -616,8 +806,8 @@ async function syncTextToEven(silent = false) {
       content: getGlassesStatusText(),
     };
 
-    const dialogueOk = await bridge.textContainerUpgrade(dialogueUpdate);
-    const statusOk = await bridge.textContainerUpgrade(statusUpdate);
+    const dialogueOk = await bridge.textContainerUpgrade(dialogueUpdate as any);
+    const statusOk = await bridge.textContainerUpgrade(statusUpdate as any);
     const ok = dialogueOk && statusOk;
 
     if (!silent) {
@@ -672,18 +862,7 @@ async function syncCodecImagesToEven(force = false) {
   }
 
   const view = glassesCodec.getViewModel();
-  const frameChanged = force || lastRenderedFrameAsset !== view.frameAsset;
   const portraitChanged = force || lastRenderedPortraitAsset !== view.portraitAsset;
-
-  if (frameChanged) {
-    const frameBytes = await getCodecAssetBytes(view.frameAsset);
-    await enqueueImageUpdate({
-      containerID: GLASSES_CONTAINERS.frameImage.id,
-      containerName: GLASSES_CONTAINERS.frameImage.name,
-      imageData: frameBytes,
-    });
-    lastRenderedFrameAsset = view.frameAsset;
-  }
 
   if (portraitChanged) {
     const portraitBytes = await getCodecAssetBytes(view.portraitAsset);
@@ -1197,7 +1376,7 @@ function ensureFeedbackManager() {
       if (result.requestClose) {
         log('Codec close requested.');
         if (bridge && hasStarted) {
-          void bridge.shutDownPageContainer(0).catch((error) => {
+          void shutdownGlassesPage('close-request').catch((error) => {
             log(`Close request failed: ${String(error)}`);
           });
         }
@@ -1311,75 +1490,17 @@ function logEventCaptureSummary() {
   );
 }
 
-async function rebuildPageWithCurrentText() {
-  if (!bridge) {
-    return false;
-  }
-
-  const fullPayload = buildRebuildContainer();
-  let rebuilt = await attemptRebuild('full', fullPayload);
-
-  if (!rebuilt) {
-    log('Starting rebuild isolation mode: Step A text-only, Step B text+frame, Step C full.');
-
-    const textOnlyPayload = buildRebuildContainerVariant({
-      includeFrameImage: false,
-      includePortraitImage: false,
-    });
-    const textOnlyOk = await attemptRebuild('isolation:text-only', textOnlyPayload);
-
-    let textFrameOk = false;
-    if (textOnlyOk) {
-      const textFramePayload = buildRebuildContainerVariant({
-        includeFrameImage: true,
-        includePortraitImage: false,
-      });
-      textFrameOk = await attemptRebuild('isolation:text+frame', textFramePayload);
-    } else {
-      log('Isolation result: text-only failed. Problem is in text/capture/count/layout payload.');
-    }
-
-    let fullIsolationOk = false;
-    if (textFrameOk) {
-      const fullIsolationPayload = buildRebuildContainerVariant({
-        includeFrameImage: true,
-        includePortraitImage: true,
-      });
-      fullIsolationOk = await attemptRebuild(
-        'isolation:text+frame+portrait',
-        fullIsolationPayload
-      );
-    } else if (textOnlyOk) {
-      log('Isolation result: text+frame failed. Frame image container likely invalid.');
-    }
-
-    if (textFrameOk && !fullIsolationOk) {
-      log('Isolation result: portrait image container likely invalid.');
-    }
-
-    rebuilt = fullIsolationOk;
-  }
-
-  if (rebuilt) {
-    hasStarted = true;
-    writeStartupContainerReadyFlag(true);
-    setupEvenHubEventListener();
-    log('Page rebuilt successfully.');
-    renderCodec();
-    await renderCodecGlassesScene(true, true);
-    return true;
-  }
-
-  log('Rebuild failed.');
-  return false;
-}
-
-async function startOnEven() {
+async function startOnEven(options?: { forceReset?: boolean }) {
   log('Waiting for Even bridge...');
 
   try {
     bridge = await waitForEvenAppBridge();
     log('Bridge connected.');
+    hasStarted = false;
+    const forceReset = Boolean(options?.forceReset && import.meta.env.DEV);
+    log(
+      `Device page lifecycle state before startup: ${devicePageLifecycleState} (forceReset=${forceReset ? 'yes' : 'no'})`
+    );
 
     const user = await bridge.getUserInfo().catch(() => null);
     const device = await bridge.getDeviceInfo().catch(() => null);
@@ -1400,45 +1521,31 @@ async function startOnEven() {
 
     logEventCaptureSummary();
 
-    if (hasStarted) {
-      log('Bridge already started in this session. Using rebuildPageContainer for refresh.');
-      await rebuildPageWithCurrentText();
+    const startupReady = await ensureStartupPageLifecycle({ forceReset });
+    if (!startupReady) {
       return;
     }
 
-    if (readStartupContainerReadyFlag()) {
-      log('Startup container already initialized in this app context; using rebuildPageContainer directly.');
-      await rebuildPageWithCurrentText();
+    log('Rebuild step A: compact two-text layout.');
+    const twoTextOk = await attemptRebuild('startup:two-text', buildTextOnlyRebuildContainer());
+    if (!twoTextOk) {
+      log('Startup rebuild failed at two-text stage.');
       return;
     }
 
-    const startupContainer = buildStartContainer();
-    const startupResult = await bridge.createStartUpPageContainer(startupContainer);
-    log(`createStartUpPageContainer result: ${startupResult}`);
-
-    if (startupResult === 0) {
-      hasStarted = true;
-      writeStartupContainerReadyFlag(true);
-      setupEvenHubEventListener();
-      log('Startup page created successfully.');
-      renderCodec();
-      await renderCodecGlassesScene(true, true);
+    log('Rebuild step B: compact codec layout with portrait + action text.');
+    const fullRebuildOk = await attemptRebuild('startup:full-with-portrait', buildRebuildContainer());
+    if (!fullRebuildOk) {
+      log('Startup rebuild failed at full layout stage.');
       return;
     }
 
-    if (startupResult === 1) {
-      log('Result 1 = invalid request.');
-      log('Likely page already exists for this app context. Falling back to rebuildPageContainer.');
-      writeStartupContainerReadyFlag(true);
-      await rebuildPageWithCurrentText();
-      return;
-    }
-
-    if (startupResult === 2) {
-      log('Result 2 = oversize request.');
-    } else if (startupResult === 3) {
-      log('Result 3 = out of memory.');
-    }
+    hasStarted = true;
+    setupEvenHubEventListener();
+    log('Startup lifecycle complete: rebuild flow ready.');
+    renderCodec();
+    await renderCodecGlassesScene(true, true);
+    return;
   } catch (error) {
     log(`Start error: ${String(error)}`);
   }
@@ -1550,7 +1657,6 @@ function cleanupInteractionResources() {
 
   activeFeedbackItems.clear();
   lastListIndexByContainer.clear();
-  lastRenderedFrameAsset = null;
   lastRenderedPortraitAsset = null;
   imageUpdateQueue = Promise.resolve();
 
@@ -1563,6 +1669,12 @@ function cleanupInteractionResources() {
 startEvenBtn.addEventListener('click', () => {
   void startOnEven();
 });
+
+if (resetStartupBtn) {
+  resetStartupBtn.addEventListener('click', () => {
+    void startOnEven({ forceReset: true });
+  });
+}
 
 prevContactBtn.addEventListener('click', () => {
   void changeContact(-1);
