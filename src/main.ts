@@ -1,60 +1,164 @@
-import './style.css'
-import typescriptLogo from './assets/typescript.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import { setupCounter } from './counter.ts'
+import './style.css';
+import {
+  waitForEvenAppBridge,
+  type TextContainerProperty,
+} from '@evenrealities/even_hub_sdk';
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-<section id="center">
-  <div class="hero">
-    <img src="${heroImg}" class="base" width="170" height="179">
-    <img src="${typescriptLogo}" class="framework" alt="TypeScript logo"/>
-    <img src=${viteLogo} class="vite" alt="Vite logo" />
+let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null;
+let started = false;
+let updateCount = 0;
+let unsubscribeEvent: (() => void) | null = null;
+
+const app = document.querySelector<HTMLDivElement>('#app');
+
+if (!app) {
+  throw new Error('Missing #app root element');
+}
+
+app.innerHTML = `
+  <div class="wrap">
+    <h1>What Even</h1>
+    <p class="subtitle">My first Even G2 plugin.</p>
+
+    <div class="card">
+      <div class="row">
+        <button id="startBtn">Start on Even</button>
+        <button id="updateBtn">Update Status</button>
+        <button id="closeBtn">Close Page</button>
+      </div>
+
+      <p class="hint">
+        Use this inside the Even beta app or simulator. A normal browser page alone will not give you the Even bridge.
+      </p>
+
+      <pre id="log" class="log"></pre>
+    </div>
   </div>
-  <div>
-    <h1>Get started</h1>
-    <p>Edit <code>src/main.ts</code> and save to test <code>HMR</code></p>
-  </div>
-  <button id="counter" type="button" class="counter"></button>
-</section>
+`;
 
-<div class="ticks"></div>
+const startBtn = document.querySelector<HTMLButtonElement>('#startBtn');
+const updateBtn = document.querySelector<HTMLButtonElement>('#updateBtn');
+const closeBtn = document.querySelector<HTMLButtonElement>('#closeBtn');
+const logEl = document.querySelector<HTMLPreElement>('#log');
 
-<section id="next-steps">
-  <div id="docs">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#documentation-icon"></use></svg>
-    <h2>Documentation</h2>
-    <p>Your questions, answered</p>
-    <ul>
-      <li>
-        <a href="https://vite.dev/" target="_blank">
-          <img class="logo" src=${viteLogo} alt="" />
-          Explore Vite
-        </a>
-      </li>
-      <li>
-        <a href="https://www.typescriptlang.org" target="_blank">
-          <img class="button-icon" src="${typescriptLogo}" alt="">
-          Learn more
-        </a>
-      </li>
-    </ul>
-  </div>
-  <div id="social">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#social-icon"></use></svg>
-    <h2>Connect with us</h2>
-    <p>Join the Vite community</p>
-    <ul>
-      <li><a href="https://github.com/vitejs/vite" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#github-icon"></use></svg>GitHub</a></li>
-      <li><a href="https://chat.vite.dev/" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#discord-icon"></use></svg>Discord</a></li>
-      <li><a href="https://x.com/vite_js" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#x-icon"></use></svg>X.com</a></li>
-      <li><a href="https://bsky.app/profile/vite.dev" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#bluesky-icon"></use></svg>Bluesky</a></li>
-    </ul>
-  </div>
-</section>
+if (!startBtn || !updateBtn || !closeBtn || !logEl) {
+  throw new Error('Missing required UI elements');
+}
 
-<div class="ticks"></div>
-<section id="spacer"></section>
-`
+function log(message: string) {
+  const time = new Date().toLocaleTimeString();
+  logEl.textContent += `[${time}] ${message}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
 
-setupCounter(document.querySelector<HTMLButtonElement>('#counter')!)
+function getStatusText() {
+  return `What Even\nStarted\nUpdates: ${updateCount}`;
+}
+
+async function startPlugin() {
+  if (started) {
+    log('Startup page already created.');
+    return;
+  }
+
+  log('Waiting for Even bridge...');
+
+  try {
+    bridge = await waitForEvenAppBridge();
+    log('Bridge connected.');
+
+    const textContainer: TextContainerProperty = {
+      xPosition: 24,
+      yPosition: 24,
+      width: 528,
+      height: 96,
+      borderWidth: 1,
+      borderColor: 5,
+      borderRdaius: 6,
+      paddingLength: 8,
+      containerID: 1,
+      containerName: 'statusbox',
+      content: getStatusText(),
+      isEventCapture: 1,
+    };
+
+    const result = await bridge.createStartUpPageContainer({
+      containerTotalNum: 1,
+      textObject: [textContainer],
+    });
+
+    if (result === 0) {
+      started = true;
+      log('Startup page created successfully.');
+
+      unsubscribeEvent = bridge.onEvenHubEvent((event) => {
+        if (event.listEvent) {
+          log(`List event: ${JSON.stringify(event.listEvent)}`);
+        } else if (event.textEvent) {
+          log(`Text event: ${JSON.stringify(event.textEvent)}`);
+        } else if (event.sysEvent) {
+          log(`System event: ${JSON.stringify(event.sysEvent)}`);
+        } else if (event.audioEvent) {
+          log(`Audio event received: ${event.audioEvent.audioPcm.length} bytes`);
+        } else {
+          log(`Unknown event: ${JSON.stringify(event.jsonData ?? event)}`);
+        }
+      });
+    } else {
+      log(`Startup page failed with result code: ${result}`);
+    }
+  } catch (error) {
+    log(`Bridge/start error: ${String(error)}`);
+    log('Open this through the Even beta app or simulator, not a normal browser tab alone.');
+  }
+}
+
+async function updateStatus() {
+  if (!bridge || !started) {
+    log('Start the plugin first.');
+    return;
+  }
+
+  updateCount += 1;
+
+  try {
+    const ok = await bridge.textContainerUpgrade({
+      containerID: 1,
+      containerName: 'statusbox',
+      contentOffset: 0,
+      contentLength: 100,
+      content: getStatusText(),
+    });
+
+    log(ok ? 'Status updated.' : 'Status update failed.');
+  } catch (error) {
+    log(`Update error: ${String(error)}`);
+  }
+}
+
+async function closePlugin() {
+  if (!bridge || !started) {
+    log('Nothing to close yet.');
+    return;
+  }
+
+  try {
+    const ok = await bridge.shutDownPageContainer(0);
+    log(ok ? 'Page closed.' : 'Close request failed.');
+    started = false;
+    updateCount = 0;
+
+    if (unsubscribeEvent) {
+      unsubscribeEvent();
+      unsubscribeEvent = null;
+    }
+  } catch (error) {
+    log(`Close error: ${String(error)}`);
+  }
+}
+
+startBtn.addEventListener('click', startPlugin);
+updateBtn.addEventListener('click', updateStatus);
+closeBtn.addEventListener('click', closePlugin);
+
+log('Web UI ready.');
