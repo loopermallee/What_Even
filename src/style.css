@@ -75,36 +75,6 @@ button:disabled {
   color: #6b7280;
 }
 
-.mission-panel {
-  margin: 0 0 16px;
-}
-
-.mission-box {
-  border: 1px solid #d1d5db;
-  border-radius: 12px;
-  background: #f9fafb;
-  padding: 16px;
-}
-
-.mission-number {
-  margin-bottom: 10px;
-  color: #6b7280;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.mission-title {
-  margin-bottom: 10px;
-  color: #111827;
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.mission-body {
-  color: #374151;
-  font-size: 0.95rem;
-}
-
 .log {
   margin: 0;
   min-height: 220px;
