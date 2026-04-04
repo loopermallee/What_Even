@@ -1,13 +1,9 @@
 import './style.css';
 import {
   waitForEvenAppBridge,
+  type CreateStartUpPageContainer,
   type TextContainerProperty,
 } from '@evenrealities/even_hub_sdk';
-
-let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null;
-let started = false;
-let updateCount = 0;
-let unsubscribeEvent: (() => void) | null = null;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -18,17 +14,15 @@ if (!app) {
 app.innerHTML = `
   <div class="wrap">
     <h1>What Even</h1>
-    <p class="subtitle">My first Even G2 plugin.</p>
+    <p class="subtitle">Fresh-start Even G2 test</p>
 
     <div class="card">
       <div class="row">
         <button id="startBtn">Start on Even</button>
-        <button id="updateBtn">Update Status</button>
-        <button id="closeBtn">Close Page</button>
       </div>
 
       <p class="hint">
-        Use this inside the Even beta app or simulator. A normal browser page alone will not give you the Even bridge.
+        This is the smallest startup test based on the Even SDK docs.
       </p>
 
       <pre id="log" class="log"></pre>
@@ -37,13 +31,13 @@ app.innerHTML = `
 `;
 
 const startBtn = document.querySelector<HTMLButtonElement>('#startBtn');
-const updateBtn = document.querySelector<HTMLButtonElement>('#updateBtn');
-const closeBtn = document.querySelector<HTMLButtonElement>('#closeBtn');
 const logEl = document.querySelector<HTMLPreElement>('#log');
 
-if (!startBtn || !updateBtn || !closeBtn || !logEl) {
+if (!startBtn || !logEl) {
   throw new Error('Missing required UI elements');
 }
+
+let hasStarted = false;
 
 function log(message: string) {
   const time = new Date().toLocaleTimeString();
@@ -51,114 +45,71 @@ function log(message: string) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function getStatusText() {
-  return `What Even\nStarted\nUpdates: ${updateCount}`;
-}
-
 async function startPlugin() {
-  if (started) {
-    log('Startup page already created.');
+  if (hasStarted) {
+    log('Startup page was already requested once.');
     return;
   }
 
   log('Waiting for Even bridge...');
 
   try {
-    bridge = await waitForEvenAppBridge();
+    const bridge = await waitForEvenAppBridge();
     log('Bridge connected.');
 
+    const user = await bridge.getUserInfo().catch(() => null);
+    const device = await bridge.getDeviceInfo().catch(() => null);
+
+    if (user) {
+      log(`User: ${user.name || '(blank name)'}`);
+    } else {
+      log('User info unavailable.');
+    }
+
+    if (device) {
+      log(`Device model: ${String(device.model)}`);
+      log(`Device SN: ${device.sn}`);
+      log(`Connect type: ${device.status?.connectType ?? 'unknown'}`);
+    } else {
+      log('Device info is null.');
+    }
+
     const textContainer: TextContainerProperty = {
-      xPosition: 24,
-      yPosition: 24,
-      width: 528,
-      height: 96,
-      borderWidth: 1,
-      borderColor: 5,
-      borderRdaius: 6,
-      paddingLength: 8,
+      xPosition: 100,
+      yPosition: 100,
+      width: 200,
+      height: 50,
       containerID: 1,
-      containerName: 'statusbox',
-      content: getStatusText(),
+      containerName: 'text-1',
+      content: 'Hello World',
       isEventCapture: 1,
     };
 
-    const result = await bridge.createStartUpPageContainer({
+    const container: CreateStartUpPageContainer = {
       containerTotalNum: 1,
       textObject: [textContainer],
-    });
+    };
+
+    const result = await bridge.createStartUpPageContainer(container);
+    log(`createStartUpPageContainer result: ${result}`);
 
     if (result === 0) {
-      started = true;
+      hasStarted = true;
       log('Startup page created successfully.');
-
-      unsubscribeEvent = bridge.onEvenHubEvent((event) => {
-        if (event.listEvent) {
-          log(`List event: ${JSON.stringify(event.listEvent)}`);
-        } else if (event.textEvent) {
-          log(`Text event: ${JSON.stringify(event.textEvent)}`);
-        } else if (event.sysEvent) {
-          log(`System event: ${JSON.stringify(event.sysEvent)}`);
-        } else if (event.audioEvent) {
-          log(`Audio event received: ${event.audioEvent.audioPcm.length} bytes`);
-        } else {
-          log(`Unknown event: ${JSON.stringify(event.jsonData ?? event)}`);
-        }
-      });
-    } else {
-      log(`Startup page failed with result code: ${result}`);
+    } else if (result === 1) {
+      log('Result 1 = invalid request.');
+    } else if (result === 2) {
+      log('Result 2 = oversize request.');
+    } else if (result === 3) {
+      log('Result 3 = out of memory.');
     }
   } catch (error) {
-    log(`Bridge/start error: ${String(error)}`);
-    log('Open this through the Even beta app or simulator, not a normal browser tab alone.');
+    log(`Error: ${String(error)}`);
   }
 }
 
-async function updateStatus() {
-  if (!bridge || !started) {
-    log('Start the plugin first.');
-    return;
-  }
-
-  updateCount += 1;
-
-  try {
-    const ok = await bridge.textContainerUpgrade({
-      containerID: 1,
-      containerName: 'statusbox',
-      contentOffset: 0,
-      contentLength: 100,
-      content: getStatusText(),
-    });
-
-    log(ok ? 'Status updated.' : 'Status update failed.');
-  } catch (error) {
-    log(`Update error: ${String(error)}`);
-  }
-}
-
-async function closePlugin() {
-  if (!bridge || !started) {
-    log('Nothing to close yet.');
-    return;
-  }
-
-  try {
-    const ok = await bridge.shutDownPageContainer(0);
-    log(ok ? 'Page closed.' : 'Close request failed.');
-    started = false;
-    updateCount = 0;
-
-    if (unsubscribeEvent) {
-      unsubscribeEvent();
-      unsubscribeEvent = null;
-    }
-  } catch (error) {
-    log(`Close error: ${String(error)}`);
-  }
-}
-
-startBtn.addEventListener('click', startPlugin);
-updateBtn.addEventListener('click', updateStatus);
-closeBtn.addEventListener('click', closePlugin);
+startBtn.addEventListener('click', () => {
+  void startPlugin();
+});
 
 log('Web UI ready.');
