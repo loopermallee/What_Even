@@ -1,4 +1,5 @@
-import { CONTACTS, RIGHT_CHARACTER } from './contacts';
+import { CONTACTS } from './contacts';
+import { generateDeterministicResponse } from './responseEngine';
 import type {
   AudioCaptureStatus,
   AppScreen,
@@ -8,6 +9,7 @@ import type {
   RawEventDebugInfo,
   SttStatus,
   TranscriptEntry,
+  TurnState,
 } from './types';
 
 const DEVICE_PAGE_LIFECYCLE_KEY = 'what-even:device-page-lifecycle';
@@ -74,6 +76,20 @@ function createInitialSttState(listeningSessionId: number) {
   };
 }
 
+function createInitialTurnState() {
+  return {
+    turnState: 'idle' as TurnState,
+    lastHandledUserTranscriptId: null as number | null,
+    pendingResponseId: null as number | null,
+    responseError: null as string | null,
+    responseStatusTimestamp: null as number | null,
+  };
+}
+
+function getLatestTranscriptCursor(transcript: TranscriptEntry[]) {
+  return transcript.length > 0 ? transcript.length - 1 : -1;
+}
+
 export function createInitialState(): AppState {
   return {
     screen: 'contacts',
@@ -85,7 +101,9 @@ export function createInitialState(): AppState {
     activeActionIndex: 0,
     endedActionIndex: 0,
     dialogueIndex: -1,
+    activeTranscriptCursor: -1,
     transcript: [],
+    ...createInitialTurnState(),
     deviceLifecycleState: readDevicePageLifecycleState(),
     lastNormalizedInput: null,
     lastRawEvent: null,
@@ -103,9 +121,23 @@ export function createInitialState(): AppState {
 export class AppStore {
   private state: AppState;
   private readonly listeners = new Set<Listener>();
+  private nextTranscriptId: number;
+  private nextResponseWorkId = 1;
 
   constructor(initialState: AppState = createInitialState()) {
     this.state = initialState;
+    this.nextTranscriptId = this.computeNextTranscriptId(initialState.transcript);
+  }
+
+  private computeNextTranscriptId(transcript: TranscriptEntry[]) {
+    const maxSeen = transcript.reduce((maxId, entry) => Math.max(maxId, entry.id), 0);
+    return maxSeen + 1;
+  }
+
+  private allocateTranscriptId() {
+    const id = this.nextTranscriptId;
+    this.nextTranscriptId += 1;
+    return id;
   }
 
   getState() {
@@ -131,6 +163,51 @@ export class AppStore {
       ...this.state,
       ...partial,
     });
+  }
+
+  private clearTurnWorkForBoundary(nextTurnState: TurnState = 'idle') {
+    return {
+      ...createInitialTurnState(),
+      turnState: nextTurnState,
+      responseStatusTimestamp: Date.now(),
+    };
+  }
+
+  private findNewestUnhandledUserEntry() {
+    const lastHandled = this.state.lastHandledUserTranscriptId;
+    for (let index = this.state.transcript.length - 1; index >= 0; index -= 1) {
+      const entry = this.state.transcript[index];
+      if (entry.role !== 'user') {
+        continue;
+      }
+
+      if (lastHandled !== null && entry.id <= lastHandled) {
+        continue;
+      }
+
+      return entry;
+    }
+
+    return null;
+  }
+
+  private appendGeneratedResponseTurns(responseTurns: Array<Pick<TranscriptEntry, 'role' | 'speaker' | 'text'>>) {
+    if (responseTurns.length === 0) {
+      return this.state.transcript;
+    }
+
+    const contactName = CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    const timestamp = Date.now();
+    const entries: TranscriptEntry[] = responseTurns.map((turn) => ({
+      id: this.allocateTranscriptId(),
+      role: turn.role,
+      speaker: turn.speaker,
+      text: turn.text,
+      contactName,
+      createdAt: timestamp,
+    }));
+
+    return [...this.state.transcript, ...entries];
   }
 
   log(message: string) {
@@ -178,7 +255,15 @@ export class AppStore {
   setSelectedContactIndex(index: number) {
     const size = CONTACTS.length;
     const normalized = ((index % size) + size) % size;
-    this.patch({ selectedContactIndex: normalized });
+    if (normalized === this.state.selectedContactIndex) {
+      return;
+    }
+
+    this.patch({
+      selectedContactIndex: normalized,
+      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      ...this.clearTurnWorkForBoundary('idle'),
+    });
   }
 
   moveContactSelection(direction: -1 | 1) {
@@ -220,7 +305,9 @@ export class AppStore {
       activeActionIndex: 0,
       endedActionIndex: 0,
       dialogueIndex: -1,
+      activeTranscriptCursor: -1,
       transcript: [],
+      ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -232,79 +319,124 @@ export class AppStore {
       screen: 'listening',
       listeningActionIndex: 0,
       activeActionIndex: 0,
+      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(listeningSessionId),
     });
   }
 
   continueListeningAndStartActiveCall() {
-    const contact = CONTACTS[this.state.selectedContactIndex];
-    const line = contact.dialogue[0];
-    const transcript: TranscriptEntry[] = [...this.state.transcript];
-    if (line) {
-      transcript.push({
-        role: line.speaker === 'left' ? 'contact' : 'system',
-        speaker: line.speaker === 'left' ? contact.name.toUpperCase() : RIGHT_CHARACTER.name.toUpperCase(),
-        text: line.text,
-        contactName: contact.name,
-        createdAt: Date.now(),
-      });
-    }
-
+    const enteredAt = Date.now();
     this.patch({
       screen: 'active',
-      dialogueIndex: line ? 0 : -1,
+      dialogueIndex: -1,
       activeActionIndex: 0,
-      transcript,
+      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      turnState: 'awaiting_user',
+      pendingResponseId: null,
+      responseError: null,
+      responseStatusTimestamp: enteredAt,
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+
+    const newestUnhandledUser = this.findNewestUnhandledUserEntry();
+    if (!newestUnhandledUser) {
+      return;
+    }
+
+    const contact = CONTACTS[this.state.selectedContactIndex];
+    if (!contact) {
+      this.patch({
+        turnState: 'error',
+        responseError: 'No selected contact available for deterministic response generation.',
+        responseStatusTimestamp: Date.now(),
+      });
+      return;
+    }
+
+    const responseWorkId = this.nextResponseWorkId++;
+    this.patch({
+      pendingResponseId: responseWorkId,
+      turnState: 'processing_user',
+      responseError: null,
+      responseStatusTimestamp: Date.now(),
+    });
+
+    try {
+      const generated = generateDeterministicResponse(contact, newestUnhandledUser.text);
+
+      if (this.state.screen !== 'active' || this.state.pendingResponseId !== responseWorkId) {
+        return;
+      }
+
+      this.patch({
+        turnState: 'responding',
+        responseStatusTimestamp: Date.now(),
+      });
+
+      const transcript = this.appendGeneratedResponseTurns(generated);
+      this.patch({
+        transcript,
+        activeTranscriptCursor: getLatestTranscriptCursor(transcript),
+        lastHandledUserTranscriptId: newestUnhandledUser.id,
+        pendingResponseId: null,
+        turnState: 'complete',
+        responseError: null,
+        responseStatusTimestamp: Date.now(),
+      });
+    } catch (error) {
+      if (this.state.pendingResponseId !== responseWorkId) {
+        return;
+      }
+
+      this.patch({
+        pendingResponseId: null,
+        turnState: 'error',
+        responseError: `Deterministic response failed: ${String(error)}`,
+        responseStatusTimestamp: Date.now(),
+      });
+    }
   }
 
   endListening() {
     this.patch({
       screen: 'ended',
       endedActionIndex: 0,
+      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
   advanceDialogueOrEnd() {
-    const contact = CONTACTS[this.state.selectedContactIndex];
-    if (this.state.dialogueIndex < 0) {
-      this.continueListeningAndStartActiveCall();
+    if (this.state.screen !== 'active') {
       return;
     }
 
-    const isFinal = this.state.dialogueIndex >= contact.dialogue.length - 1;
-    if (isFinal) {
-      this.patch({ screen: 'ended', endedActionIndex: 0 });
+    const transcriptLength = this.state.transcript.length;
+    if (transcriptLength === 0) {
+      this.patch({ activeTranscriptCursor: -1 });
       return;
     }
 
-    const nextIndex = this.state.dialogueIndex + 1;
-    const line = contact.dialogue[nextIndex];
-    const entry: TranscriptEntry | null = line
-      ? {
-        role: line.speaker === 'left' ? 'contact' : 'system',
-        speaker: line.speaker === 'left' ? contact.name.toUpperCase() : RIGHT_CHARACTER.name.toUpperCase(),
-        text: line.text,
-        contactName: contact.name,
-        createdAt: Date.now(),
-      }
-      : null;
+    const current = this.state.activeTranscriptCursor;
+    const nextCursor = Math.min(current + 1, transcriptLength - 1);
+    if (nextCursor === current) {
+      return;
+    }
 
-    this.patch({
-      dialogueIndex: nextIndex,
-      transcript: entry ? [...this.state.transcript, entry] : this.state.transcript,
-    });
+    this.patch({ activeTranscriptCursor: nextCursor });
   }
 
   endCall() {
     this.patch({
       screen: 'ended',
       endedActionIndex: 0,
+      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -314,6 +446,8 @@ export class AppStore {
     this.patch({
       screen: 'ended',
       endedActionIndex: 0,
+      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -327,7 +461,9 @@ export class AppStore {
       activeActionIndex: 0,
       endedActionIndex: 0,
       dialogueIndex: -1,
+      activeTranscriptCursor: -1,
       transcript: [],
+      ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -407,26 +543,47 @@ export class AppStore {
     }
 
     const contactName = options?.contactName ?? CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    const entry: TranscriptEntry = {
+      id: this.allocateTranscriptId(),
+      role: 'user',
+      speaker: options?.speaker ?? 'YOU',
+      text: normalized,
+      contactName,
+      createdAt: Date.now(),
+    };
+
+    const transcript = [...this.state.transcript, entry];
     this.patch({
-      transcript: [
-        ...this.state.transcript,
-        {
-          role: 'user',
-          speaker: options?.speaker ?? 'YOU',
-          text: normalized,
-          contactName,
-          createdAt: Date.now(),
-        },
-      ],
+      transcript,
+      activeTranscriptCursor: getLatestTranscriptCursor(transcript),
       sttPartialTranscript: '',
+      pendingResponseId: null,
+      turnState: this.state.screen === 'active' ? 'awaiting_user' : this.state.turnState,
+      responseError: null,
+      responseStatusTimestamp: Date.now(),
       lastTranscriptAt: Date.now(),
     });
     return true;
   }
 
-  commitTranscriptEntry(entry: TranscriptEntry) {
+  commitTranscriptEntry(entry: Omit<TranscriptEntry, 'id'> | TranscriptEntry) {
+    if ('id' in entry && entry.id >= this.nextTranscriptId) {
+      this.nextTranscriptId = entry.id + 1;
+    }
+
+    const nextEntry: TranscriptEntry = {
+      ...entry,
+      id: 'id' in entry && entry.id > 0 ? entry.id : this.allocateTranscriptId(),
+    };
+
+    const transcript = [...this.state.transcript, nextEntry];
     this.patch({
-      transcript: [...this.state.transcript, entry],
+      transcript,
+      activeTranscriptCursor: getLatestTranscriptCursor(transcript),
+      pendingResponseId: null,
+      turnState: nextEntry.role === 'user' ? 'awaiting_user' : this.state.turnState,
+      responseError: null,
+      responseStatusTimestamp: Date.now(),
       lastTranscriptAt: Date.now(),
     });
   }

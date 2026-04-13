@@ -33,12 +33,15 @@ export type RawEventDebugInfo = {
 };
 
 export type TranscriptEntry = {
+  id: number;
   role: 'user' | 'contact' | 'system';
   speaker: string;
   text: string;
   contactName: string;
   createdAt: number;
 };
+
+export type TurnState = 'idle' | 'awaiting_user' | 'processing_user' | 'responding' | 'complete' | 'error';
 
 export type AudioCaptureStatus = 'idle' | 'opening' | 'listening' | 'closing' | 'error';
 export type SttStatus = 'idle' | 'connecting' | 'streaming' | 'closing' | 'error';
@@ -59,7 +62,13 @@ export type AppState = {
   activeActionIndex: number;
   endedActionIndex: number;
   dialogueIndex: number;
+  activeTranscriptCursor: number;
   transcript: TranscriptEntry[];
+  turnState: TurnState;
+  lastHandledUserTranscriptId: number | null;
+  pendingResponseId: number | null;
+  responseError: string | null;
+  responseStatusTimestamp: number | null;
   deviceLifecycleState: DevicePageLifecycleState;
   lastNormalizedInput: NormalizedInput | null;
   lastRawEvent: RawEventDebugInfo | null;

@@ -1,5 +1,5 @@
-import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
-import type { AppState } from '../app/types';
+import { CONTACTS } from '../app/contacts';
+import type { AppState, TranscriptEntry } from '../app/types';
 
 export type PortraitAsset = 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
 
@@ -72,9 +72,13 @@ export function getPortraitAssetForContactName(name: string): PortraitAsset {
 export function getPortraitAssetForState(state: AppState): PortraitAsset {
   const contact = getSelectedContact(state);
 
-  if (state.screen === 'active' && state.dialogueIndex >= 0) {
-    const line = contact.dialogue[state.dialogueIndex];
-    if (line?.speaker === 'right') {
+  if (state.screen === 'active') {
+    const activeEntry = getActiveTranscriptEntry(state);
+    if (!activeEntry) {
+      return getPortraitAssetForContactName(contact.name);
+    }
+
+    if (activeEntry.role === 'user' || activeEntry.role === 'system') {
       return 'portrait-snake';
     }
   }
@@ -83,15 +87,23 @@ export function getPortraitAssetForState(state: AppState): PortraitAsset {
 }
 
 export function getCurrentSpeakerName(state: AppState) {
+  const activeEntry = getActiveTranscriptEntry(state);
+  if (activeEntry) {
+    return activeEntry.speaker.toUpperCase();
+  }
+
   const contact = getSelectedContact(state);
-  if (state.dialogueIndex < 0) {
-    return contact.name.toUpperCase();
+  return contact.name.toUpperCase();
+}
+
+export function getActiveTranscriptEntry(state: AppState): TranscriptEntry | null {
+  if (state.transcript.length === 0) {
+    return null;
   }
 
-  const line = contact.dialogue[state.dialogueIndex];
-  if (!line) {
-    return contact.name.toUpperCase();
+  if (state.activeTranscriptCursor < 0) {
+    return null;
   }
 
-  return (line.speaker === 'left' ? contact.name : RIGHT_CHARACTER.name).toUpperCase();
+  return state.transcript[state.activeTranscriptCursor] ?? null;
 }

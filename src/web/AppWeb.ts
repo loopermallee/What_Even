@@ -17,16 +17,25 @@ function mustQuery<T extends Element>(selector: string) {
 function getCompanionSpeakerAndLine(state: AppState) {
   const contact = CONTACTS[state.selectedContactIndex];
 
-  if (state.screen === 'active' && state.dialogueIndex >= 0) {
-    const line = contact.dialogue[state.dialogueIndex];
-    if (line) {
+  if (state.screen === 'active') {
+    const activeEntry = state.activeTranscriptCursor >= 0 ? state.transcript[state.activeTranscriptCursor] : null;
+    const turnLabel = state.turnState.replace('_', ' ');
+    if (activeEntry) {
+      const leftActive = activeEntry.role === 'contact';
       return {
-        speaker: (line.speaker === 'left' ? contact.name : 'Snake').toUpperCase(),
-        text: line.text,
-        leftActive: line.speaker === 'left',
-        rightActive: line.speaker === 'right',
+        speaker: activeEntry.speaker.toUpperCase(),
+        text: `${activeEntry.text} [${state.activeTranscriptCursor + 1}/${state.transcript.length}] (${turnLabel})`,
+        leftActive,
+        rightActive: !leftActive,
       };
     }
+
+    return {
+      speaker: 'ACTIVE',
+      text: `Awaiting committed user input (${turnLabel}).`,
+      leftActive: true,
+      rightActive: false,
+    };
   }
 
   if (state.screen === 'incoming') {
@@ -123,6 +132,9 @@ export class AppWeb {
     const contact = CONTACTS[state.selectedContactIndex];
     const line = getCompanionSpeakerAndLine(state);
 
+    const latestUserFinal = [...state.transcript].reverse().find((entry) => entry.role === 'user') ?? null;
+    const latestGenerated = [...state.transcript].reverse().find((entry) => entry.role === 'contact' || entry.role === 'system') ?? null;
+
     root.innerHTML = `
       <div class="wrap">
         <h1>What Even</h1>
@@ -157,6 +169,14 @@ export class AppWeb {
           <div>STT Partial: <strong>${state.sttPartialTranscript || 'none'}</strong></div>
           <div>Last Transcript At: <strong>${state.lastTranscriptAt === null ? 'none' : new Date(state.lastTranscriptAt).toLocaleTimeString()}</strong></div>
           <div>STT Error: <strong>${state.sttError ?? 'none'}</strong></div>
+          <div>Turn State: <strong>${state.turnState}</strong></div>
+          <div>Pending Response ID: <strong>${state.pendingResponseId ?? 'none'}</strong></div>
+          <div>Last Handled User ID: <strong>${state.lastHandledUserTranscriptId ?? 'none'}</strong></div>
+          <div>Response Error: <strong>${state.responseError ?? 'none'}</strong></div>
+          <div>Response Status At: <strong>${state.responseStatusTimestamp === null ? 'none' : new Date(state.responseStatusTimestamp).toLocaleTimeString()}</strong></div>
+          <div>Active Cursor: <strong>${state.activeTranscriptCursor >= 0 ? `${state.activeTranscriptCursor + 1}/${state.transcript.length}` : '0/0'}</strong></div>
+          <div>Latest User Final: <strong>${latestUserFinal ? `${latestUserFinal.speaker}: ${latestUserFinal.text}` : 'none'}</strong></div>
+          <div>Latest Generated Turn: <strong>${latestGenerated ? `${latestGenerated.speaker}: ${latestGenerated.text}` : 'none'}</strong></div>
           <div>Buffered Duration: <strong>${state.bufferedAudioDurationMs} ms</strong></div>
           <div>Buffered Bytes: <strong>${state.audioBufferByteLength}</strong></div>
           <div>Buffered Chunks: <strong>${state.audioFrameCount}</strong></div>
@@ -285,7 +305,7 @@ export class AppWeb {
       return;
     }
 
-    const active = state.screen === 'active' && state.dialogueIndex >= 0;
+    const active = state.screen === 'active' && state.activeTranscriptCursor >= 0;
 
     if (!active) {
       if (this.speakingTimer !== null) {
@@ -298,13 +318,18 @@ export class AppWeb {
       return;
     }
 
+    const activeEntry = state.transcript[state.activeTranscriptCursor];
+    if (!activeEntry) {
+      return;
+    }
+
     if (this.speakingTimer !== null) {
       return;
     }
 
     const levels = [2, 4, 7, 5, 8, 3, 6];
     this.speakingTimer = window.setInterval(() => {
-      this.mouthOpen = !this.mouthOpen;
+      this.mouthOpen = activeEntry.role !== 'system' ? !this.mouthOpen : false;
       this.barLevel = levels[Math.floor(Math.random() * levels.length)] ?? 0;
       this.render(this.store.getState());
     }, 140);
