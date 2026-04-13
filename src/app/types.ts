@@ -1,0 +1,69 @@
+export type SpeakerSide = 'left' | 'right';
+
+export type DialogueLine = {
+  speaker: SpeakerSide;
+  text: string;
+};
+
+export type Contact = {
+  name: string;
+  code: string;
+  frequency: string;
+  portraitTag: string;
+  dialogue: DialogueLine[];
+};
+
+export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
+
+export type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
+
+export type EventBranchSource = 'listEvent' | 'textEvent' | 'sysEvent' | 'unknown';
+
+export type NormalizedInput = 'UP' | 'DOWN' | 'TAP' | 'DOUBLE_TAP' | 'AT_TOP' | 'AT_BOTTOM';
+
+export type RawEventDebugInfo = {
+  source: EventBranchSource;
+  rawEventTypeName: string;
+  normalizedTypeToken: string;
+  eventTypeCandidates: string[];
+  containerID: number | null;
+  containerName: string | null;
+  currentSelectItemName: string | null;
+  currentSelectItemIndex: number | null;
+};
+
+export type TranscriptEntry = {
+  speaker: string;
+  text: string;
+  contactName: string;
+  createdAt: number;
+};
+
+export type ImageSyncDebugInfo = {
+  lastPortraitAsset: string | null;
+  lastResult: 'idle' | 'success' | 'failed';
+  lastAt: number | null;
+};
+
+export type ListeningScaffoldState = {
+  enabledInPhase1: false;
+  note: string;
+};
+
+export type AppState = {
+  screen: AppScreen;
+  screenBeforeDebug: Exclude<AppScreen, 'debug'>;
+  started: boolean;
+  selectedContactIndex: number;
+  incomingActionIndex: number;
+  activeActionIndex: number;
+  endedActionIndex: number;
+  dialogueIndex: number;
+  transcript: TranscriptEntry[];
+  deviceLifecycleState: DevicePageLifecycleState;
+  lastNormalizedInput: NormalizedInput | null;
+  lastRawEvent: RawEventDebugInfo | null;
+  imageSync: ImageSyncDebugInfo;
+  listeningScaffold: ListeningScaffoldState;
+  logs: string[];
+};

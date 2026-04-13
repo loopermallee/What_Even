@@ -373,3 +373,35 @@ button:disabled {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+.debug-card {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: #07110d;
+  border: 1px solid rgba(120, 183, 147, 0.35);
+  border-radius: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.transcript-panel {
+  margin-top: 12px;
+  border-top: 1px solid rgba(111, 255, 176, 0.2);
+  padding-top: 10px;
+}
+
+.transcript-line {
+  font-size: 0.8rem;
+  color: #d7ffe8;
+  margin-bottom: 6px;
+}
+
+.transcript-speaker {
+  color: #92e7b6;
+  font-weight: 700;
+}
+
+.transcript-empty {
+  font-size: 0.78rem;
+  color: #78b793;
+}
