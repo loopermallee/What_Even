@@ -381,7 +381,30 @@ button:disabled {
   border: 1px solid rgba(120, 183, 147, 0.35);
   border-radius: 12px;
   display: grid;
-  gap: 6px;
+  gap: 10px;
+}
+
+.debug-section {
+  border: 1px solid rgba(120, 183, 147, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.015);
+  padding: 8px 10px;
+}
+
+.debug-heading {
+  margin-bottom: 6px;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9fe8be;
+  font-weight: 700;
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 10px;
+  font-size: 0.84rem;
 }
 
 .transcript-panel {
@@ -390,14 +413,66 @@ button:disabled {
   padding-top: 10px;
 }
 
-.transcript-line {
-  font-size: 0.8rem;
-  color: #d7ffe8;
-  margin-bottom: 6px;
+.transcript-live-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(255, 231, 153, 0.25);
+  background: rgba(255, 229, 128, 0.05);
+  border-radius: 8px;
+  padding: 6px 8px;
 }
 
-.transcript-partial {
-  color: #fff2ba;
+.transcript-committed {
+  display: grid;
+  gap: 4px;
+}
+
+.transcript-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #d7ffe8;
+  padding: 4px 0;
+}
+
+.transcript-chip {
+  min-width: 58px;
+  text-align: center;
+  border-radius: 999px;
+  border: 1px solid rgba(146, 231, 182, 0.35);
+  padding: 2px 6px;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #b8ffe0;
+  background: rgba(75, 150, 111, 0.18);
+}
+
+.transcript-chip-live {
+  color: #fff1b5;
+  border-color: rgba(255, 230, 145, 0.5);
+  background: rgba(255, 219, 94, 0.14);
+}
+
+.transcript-chip-user {
+  color: #f4fff9;
+  border-color: rgba(198, 255, 224, 0.45);
+  background: rgba(139, 213, 176, 0.18);
+}
+
+.transcript-chip-contact {
+  color: #d3ffea;
+  border-color: rgba(128, 236, 180, 0.35);
+  background: rgba(62, 159, 120, 0.18);
+}
+
+.transcript-chip-system {
+  color: #d8f5ff;
+  border-color: rgba(126, 214, 247, 0.38);
+  background: rgba(61, 118, 140, 0.2);
 }
 
 .transcript-role-user {
@@ -415,6 +490,12 @@ button:disabled {
 .transcript-speaker {
   color: #92e7b6;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.transcript-text {
+  color: inherit;
+  line-height: 1.4;
 }
 
 .transcript-empty {

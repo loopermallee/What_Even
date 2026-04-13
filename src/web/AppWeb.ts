@@ -1,4 +1,5 @@
 import { CONTACTS } from '../app/contacts';
+import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from '../app/presentation';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
 import { renderCodecShell } from './components/CodecShell';
@@ -16,15 +17,16 @@ function mustQuery<T extends Element>(selector: string) {
 
 function getCompanionSpeakerAndLine(state: AppState) {
   const contact = CONTACTS[state.selectedContactIndex];
+  const canonicalLabel = getCanonicalTurnLabel(state.turnState);
 
   if (state.screen === 'active') {
     const activeEntry = state.activeTranscriptCursor >= 0 ? state.transcript[state.activeTranscriptCursor] : null;
-    const turnLabel = state.turnState.replace('_', ' ');
     if (activeEntry) {
       const leftActive = activeEntry.role === 'contact';
+      const stateSuffix = state.turnState === 'error' ? 'Response issue' : canonicalLabel;
       return {
         speaker: activeEntry.speaker.toUpperCase(),
-        text: `${activeEntry.text} [${state.activeTranscriptCursor + 1}/${state.transcript.length}] (${turnLabel})`,
+        text: `${activeEntry.text} (${stateSuffix})`,
         leftActive,
         rightActive: !leftActive,
       };
@@ -32,7 +34,7 @@ function getCompanionSpeakerAndLine(state: AppState) {
 
     return {
       speaker: 'ACTIVE',
-      text: `Awaiting committed user input (${turnLabel}).`,
+      text: 'Awaiting input. Waiting for confirmed user speech before response generation.',
       leftActive: true,
       rightActive: false,
     };
@@ -49,11 +51,14 @@ function getCompanionSpeakerAndLine(state: AppState) {
 
   if (state.screen === 'listening') {
     const partial = state.sttPartialTranscript.trim();
+    const noConfirmedSpeech = shouldShowNoConfirmedSpeech(state);
     const lastCommitted = [...state.transcript].reverse().find((entry) => entry.text.trim().length > 0)?.text ?? 'none yet';
-    const status = state.sttError ? `${state.sttStatus} (error)` : state.sttStatus;
+    const listeningLabel = state.sttStatus === 'streaming' || state.micOpen ? 'Listening' : canonicalLabel;
+    const status = state.sttError ? 'STT issue' : listeningLabel;
+    const partialOrNoSpeech = partial || (noConfirmedSpeech ? 'No confirmed speech' : '...');
     return {
       speaker: 'LISTENING',
-      text: `STT ${status} | Partial: ${partial || '...'} | Last: ${lastCommitted} | Audio: mic ${state.micOpen ? 'open' : 'closed'} / ${state.audioCaptureStatus}`,
+      text: `State: ${status} | Partial: ${partialOrNoSpeech} | Last confirmed: ${lastCommitted} | Audio: mic ${state.micOpen ? 'open' : 'closed'} / ${state.audioCaptureStatus}`,
       leftActive: true,
       rightActive: false,
     };
@@ -157,32 +162,52 @@ export class AppWeb {
         </div>
 
         <div class="debug-card">
-          <div>Current Screen: <strong>${state.screen}</strong></div>
-          <div>Last Input: <strong>${state.lastNormalizedInput ?? 'none'}</strong></div>
-          <div>Last Raw Source: <strong>${state.lastRawEvent?.source ?? 'none'}</strong></div>
-          <div>Last Raw Type: <strong>${state.lastRawEvent?.rawEventTypeName ?? 'none'}</strong></div>
-          <div>Lifecycle: <strong>${state.deviceLifecycleState}</strong></div>
-          <div>Image Sync: <strong>${state.imageSync.lastResult}</strong></div>
-          <div>Mic Open: <strong>${state.micOpen ? 'yes' : 'no'}</strong></div>
-          <div>Capture Status: <strong>${state.audioCaptureStatus}</strong></div>
-          <div>STT Status: <strong>${state.sttStatus}</strong></div>
-          <div>STT Partial: <strong>${state.sttPartialTranscript || 'none'}</strong></div>
-          <div>Last Transcript At: <strong>${state.lastTranscriptAt === null ? 'none' : new Date(state.lastTranscriptAt).toLocaleTimeString()}</strong></div>
-          <div>STT Error: <strong>${state.sttError ?? 'none'}</strong></div>
-          <div>Turn State: <strong>${state.turnState}</strong></div>
-          <div>Pending Response ID: <strong>${state.pendingResponseId ?? 'none'}</strong></div>
-          <div>Last Handled User ID: <strong>${state.lastHandledUserTranscriptId ?? 'none'}</strong></div>
-          <div>Response Error: <strong>${state.responseError ?? 'none'}</strong></div>
-          <div>Response Status At: <strong>${state.responseStatusTimestamp === null ? 'none' : new Date(state.responseStatusTimestamp).toLocaleTimeString()}</strong></div>
-          <div>Active Cursor: <strong>${state.activeTranscriptCursor >= 0 ? `${state.activeTranscriptCursor + 1}/${state.transcript.length}` : '0/0'}</strong></div>
-          <div>Latest User Final: <strong>${latestUserFinal ? `${latestUserFinal.speaker}: ${latestUserFinal.text}` : 'none'}</strong></div>
-          <div>Latest Generated Turn: <strong>${latestGenerated ? `${latestGenerated.speaker}: ${latestGenerated.text}` : 'none'}</strong></div>
-          <div>Buffered Duration: <strong>${state.bufferedAudioDurationMs} ms</strong></div>
-          <div>Buffered Bytes: <strong>${state.audioBufferByteLength}</strong></div>
-          <div>Buffered Chunks: <strong>${state.audioFrameCount}</strong></div>
-          <div>Last Audio At: <strong>${state.lastAudioFrameAt === null ? 'none' : new Date(state.lastAudioFrameAt).toLocaleTimeString()}</strong></div>
-          <div>Activity Level: <strong>${Math.round(state.listeningActivityLevel * 100)}%</strong></div>
-          <div>Audio Error: <strong>${state.audioError ?? 'none'}</strong></div>
+          <div class="debug-section">
+            <div class="debug-heading">Session</div>
+            <div class="debug-grid">
+              <div>Screen: <strong>${state.screen}</strong></div>
+              <div>Lifecycle: <strong>${state.deviceLifecycleState}</strong></div>
+              <div>Image Sync: <strong>${state.imageSync.lastResult}</strong></div>
+              <div>Last Input: <strong>${state.lastNormalizedInput ?? 'none'}</strong></div>
+              <div>Raw Source: <strong>${state.lastRawEvent?.source ?? 'none'}</strong></div>
+              <div>Raw Type: <strong>${state.lastRawEvent?.rawEventTypeName ?? 'none'}</strong></div>
+            </div>
+          </div>
+          <div class="debug-section">
+            <div class="debug-heading">Listening / STT</div>
+            <div class="debug-grid">
+              <div>Mic Open: <strong>${state.micOpen ? 'yes' : 'no'}</strong></div>
+              <div>Capture: <strong>${state.audioCaptureStatus}</strong></div>
+              <div>STT: <strong>${state.sttStatus}</strong></div>
+              <div>STT Partial: <strong>${state.sttPartialTranscript || 'none'}</strong></div>
+              <div>STT Error: <strong>${state.sttError ?? 'none'}</strong></div>
+              <div>Last Transcript At: <strong>${state.lastTranscriptAt === null ? 'none' : new Date(state.lastTranscriptAt).toLocaleTimeString()}</strong></div>
+            </div>
+          </div>
+          <div class="debug-section">
+            <div class="debug-heading">Turn / Response</div>
+            <div class="debug-grid">
+              <div>Turn State: <strong>${state.turnState}</strong></div>
+              <div>Pending Response ID: <strong>${state.pendingResponseId ?? 'none'}</strong></div>
+              <div>Last Handled User ID: <strong>${state.lastHandledUserTranscriptId ?? 'none'}</strong></div>
+              <div>Response Error: <strong>${state.responseError ?? 'none'}</strong></div>
+              <div>Response Status At: <strong>${state.responseStatusTimestamp === null ? 'none' : new Date(state.responseStatusTimestamp).toLocaleTimeString()}</strong></div>
+              <div>Active Cursor: <strong>${state.activeTranscriptCursor >= 0 ? `${state.activeTranscriptCursor + 1}/${state.transcript.length}` : '0/0'}</strong></div>
+              <div>Latest User Final: <strong>${latestUserFinal ? `${latestUserFinal.speaker}: ${latestUserFinal.text}` : 'none'}</strong></div>
+              <div>Latest Generated Turn: <strong>${latestGenerated ? `${latestGenerated.speaker}: ${latestGenerated.text}` : 'none'}</strong></div>
+            </div>
+          </div>
+          <div class="debug-section">
+            <div class="debug-heading">Audio Metrics</div>
+            <div class="debug-grid">
+              <div>Buffered Duration: <strong>${state.bufferedAudioDurationMs} ms</strong></div>
+              <div>Buffered Bytes: <strong>${state.audioBufferByteLength}</strong></div>
+              <div>Buffered Chunks: <strong>${state.audioFrameCount}</strong></div>
+              <div>Last Audio At: <strong>${state.lastAudioFrameAt === null ? 'none' : new Date(state.lastAudioFrameAt).toLocaleTimeString()}</strong></div>
+              <div>Activity Level: <strong>${Math.round(state.listeningActivityLevel * 100)}%</strong></div>
+              <div>Audio Error: <strong>${state.audioError ?? 'none'}</strong></div>
+            </div>
+          </div>
         </div>
 
         ${renderDebugLog(state.logs)}
