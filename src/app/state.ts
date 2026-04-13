@@ -1,5 +1,6 @@
 import { CONTACTS, RIGHT_CHARACTER } from './contacts';
 import type {
+  AudioCaptureStatus,
   AppScreen,
   AppState,
   DevicePageLifecycleState,
@@ -49,6 +50,19 @@ function writeDevicePageLifecycleState(value: DevicePageLifecycleState) {
   }
 }
 
+function createInitialAudioCaptureState() {
+  return {
+    audioCaptureStatus: 'idle' as AudioCaptureStatus,
+    micOpen: false,
+    audioFrameCount: 0,
+    audioBufferByteLength: 0,
+    bufferedAudioDurationMs: 0,
+    lastAudioFrameAt: null as number | null,
+    listeningActivityLevel: 0,
+    audioError: null as string | null,
+  };
+}
+
 export function createInitialState(): AppState {
   return {
     screen: 'contacts',
@@ -56,6 +70,7 @@ export function createInitialState(): AppState {
     started: false,
     selectedContactIndex: 0,
     incomingActionIndex: 0,
+    listeningActionIndex: 0,
     activeActionIndex: 0,
     endedActionIndex: 0,
     dialogueIndex: -1,
@@ -68,10 +83,7 @@ export function createInitialState(): AppState {
       lastResult: 'idle',
       lastAt: null,
     },
-    listeningScaffold: {
-      enabledInPhase1: false,
-      note: 'Reserved for future STT/audio turn-taking flow.',
-    },
+    ...createInitialAudioCaptureState(),
     logs: [],
   };
 }
@@ -124,10 +136,6 @@ export class AppStore {
   }
 
   setScreen(screen: AppScreen) {
-    if (screen === 'listening') {
-      return;
-    }
-
     this.patch({ screen });
   }
 
@@ -173,6 +181,10 @@ export class AppStore {
     this.patch({ activeActionIndex: clampActionIndex(index, 2) });
   }
 
+  setListeningActionIndex(index: number) {
+    this.patch({ listeningActionIndex: clampActionIndex(index, 2) });
+  }
+
   setEndedActionIndex(index: number) {
     this.patch({ endedActionIndex: clampActionIndex(index, 2) });
   }
@@ -192,14 +204,25 @@ export class AppStore {
     this.patch({
       screen: 'incoming',
       incomingActionIndex: 0,
+      listeningActionIndex: 0,
       activeActionIndex: 0,
       endedActionIndex: 0,
       dialogueIndex: -1,
       transcript: [],
+      ...createInitialAudioCaptureState(),
     });
   }
 
-  startActiveCall() {
+  answerIncomingAndStartListening() {
+    this.patch({
+      screen: 'listening',
+      listeningActionIndex: 0,
+      activeActionIndex: 0,
+      ...createInitialAudioCaptureState(),
+    });
+  }
+
+  continueListeningAndStartActiveCall() {
     const contact = CONTACTS[this.state.selectedContactIndex];
     const line = contact.dialogue[0];
     const transcript: TranscriptEntry[] = line
@@ -216,13 +239,22 @@ export class AppStore {
       dialogueIndex: line ? 0 : -1,
       activeActionIndex: 0,
       transcript,
+      ...createInitialAudioCaptureState(),
+    });
+  }
+
+  endListening() {
+    this.patch({
+      screen: 'ended',
+      endedActionIndex: 0,
+      ...createInitialAudioCaptureState(),
     });
   }
 
   advanceDialogueOrEnd() {
     const contact = CONTACTS[this.state.selectedContactIndex];
     if (this.state.dialogueIndex < 0) {
-      this.startActiveCall();
+      this.continueListeningAndStartActiveCall();
       return;
     }
 
@@ -250,25 +282,69 @@ export class AppStore {
   }
 
   endCall() {
-    this.patch({ screen: 'ended', endedActionIndex: 0 });
+    this.patch({
+      screen: 'ended',
+      endedActionIndex: 0,
+      ...createInitialAudioCaptureState(),
+    });
   }
 
   ignoreIncoming() {
-    this.patch({ screen: 'ended', endedActionIndex: 0 });
+    this.patch({
+      screen: 'ended',
+      endedActionIndex: 0,
+      ...createInitialAudioCaptureState(),
+    });
   }
 
   backToContacts() {
     this.patch({
       screen: 'contacts',
       incomingActionIndex: 0,
+      listeningActionIndex: 0,
       activeActionIndex: 0,
       endedActionIndex: 0,
       dialogueIndex: -1,
       transcript: [],
+      ...createInitialAudioCaptureState(),
     });
   }
 
   redialCurrentContact() {
     this.goToIncomingForSelectedContact();
+  }
+
+  setAudioCaptureStatus(status: AudioCaptureStatus, options?: { micOpen?: boolean; error?: string | null }) {
+    const patch: Partial<AppState> = {
+      audioCaptureStatus: status,
+    };
+
+    if (typeof options?.micOpen === 'boolean') {
+      patch.micOpen = options.micOpen;
+    }
+
+    if (options && 'error' in options) {
+      patch.audioError = options.error ?? null;
+    } else if (status !== 'error') {
+      patch.audioError = null;
+    }
+
+    this.patch(patch);
+  }
+
+  updateAudioCaptureMetrics(update: {
+    audioFrameCount: number;
+    audioBufferByteLength: number;
+    bufferedAudioDurationMs: number;
+    lastAudioFrameAt: number;
+    listeningActivityLevel: number;
+  }) {
+    this.patch({
+      audioFrameCount: update.audioFrameCount,
+      audioBufferByteLength: update.audioBufferByteLength,
+      bufferedAudioDurationMs: update.bufferedAudioDurationMs,
+      lastAudioFrameAt: update.lastAudioFrameAt,
+      listeningActivityLevel: update.listeningActivityLevel,
+    });
   }
 }

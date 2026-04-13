@@ -38,6 +38,17 @@ function getCompanionSpeakerAndLine(state: AppState) {
     };
   }
 
+  if (state.screen === 'listening') {
+    const frameAgeMs = state.lastAudioFrameAt === null ? null : Math.max(0, Date.now() - state.lastAudioFrameAt);
+    const freshness = frameAgeMs === null ? 'no frames yet' : frameAgeMs <= 1000 ? 'live' : `stale (${frameAgeMs}ms old)`;
+    return {
+      speaker: 'LISTENING',
+      text: `Mic ${state.micOpen ? 'open' : 'closed'} | status=${state.audioCaptureStatus} | buffered=${state.bufferedAudioDurationMs}ms (${state.audioBufferByteLength} bytes, ${state.audioFrameCount} chunks) | ${freshness}`,
+      leftActive: true,
+      rightActive: false,
+    };
+  }
+
   if (state.screen === 'ended') {
     return {
       speaker: 'SYSTEM',
@@ -139,6 +150,14 @@ export class AppWeb {
           <div>Last Raw Type: <strong>${state.lastRawEvent?.rawEventTypeName ?? 'none'}</strong></div>
           <div>Lifecycle: <strong>${state.deviceLifecycleState}</strong></div>
           <div>Image Sync: <strong>${state.imageSync.lastResult}</strong></div>
+          <div>Mic Open: <strong>${state.micOpen ? 'yes' : 'no'}</strong></div>
+          <div>Capture Status: <strong>${state.audioCaptureStatus}</strong></div>
+          <div>Buffered Duration: <strong>${state.bufferedAudioDurationMs} ms</strong></div>
+          <div>Buffered Bytes: <strong>${state.audioBufferByteLength}</strong></div>
+          <div>Buffered Chunks: <strong>${state.audioFrameCount}</strong></div>
+          <div>Last Audio At: <strong>${state.lastAudioFrameAt === null ? 'none' : new Date(state.lastAudioFrameAt).toLocaleTimeString()}</strong></div>
+          <div>Activity Level: <strong>${Math.round(state.listeningActivityLevel * 100)}%</strong></div>
+          <div>Audio Error: <strong>${state.audioError ?? 'none'}</strong></div>
         </div>
 
         ${renderDebugLog(state.logs)}
@@ -168,6 +187,20 @@ export class AppWeb {
     mustQuery<HTMLButtonElement>('#openIncomingBtn').onclick = () => {
       if (this.store.getState().screen === 'contacts') {
         this.store.goToIncomingForSelectedContact();
+      }
+    };
+
+    mustQuery<HTMLButtonElement>('#listeningContinueBtn').onclick = () => {
+      if (this.store.getState().screen === 'listening') {
+        this.store.setListeningActionIndex(0);
+        this.store.continueListeningAndStartActiveCall();
+      }
+    };
+
+    mustQuery<HTMLButtonElement>('#listeningEndBtn').onclick = () => {
+      if (this.store.getState().screen === 'listening') {
+        this.store.setListeningActionIndex(1);
+        this.store.endListening();
       }
     };
 
@@ -236,6 +269,17 @@ export class AppWeb {
   }
 
   private refreshSpeakingAnimation(state: AppState) {
+    if (state.screen === 'listening') {
+      if (this.speakingTimer !== null) {
+        window.clearInterval(this.speakingTimer);
+        this.speakingTimer = null;
+      }
+
+      this.mouthOpen = false;
+      this.barLevel = Math.max(0, Math.min(10, Math.round(state.listeningActivityLevel * 10)));
+      return;
+    }
+
     const active = state.screen === 'active' && state.dialogueIndex >= 0;
 
     if (!active) {

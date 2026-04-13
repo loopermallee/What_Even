@@ -86,7 +86,7 @@ export class AppGlasses {
 
       if (input === 'TAP') {
         if (this.store.getState().incomingActionIndex === 0) {
-          this.store.startActiveCall();
+          this.store.answerIncomingAndStartListening();
         } else {
           this.store.ignoreIncoming();
         }
@@ -94,6 +94,35 @@ export class AppGlasses {
       }
 
       return { changed: false, requestClose: input === 'DOUBLE_TAP' };
+    }
+
+    if (state.screen === 'listening') {
+      if (input === 'UP') {
+        this.store.setListeningActionIndex(0);
+        return { changed: true, requestClose: false };
+      }
+
+      if (input === 'DOWN') {
+        this.store.setListeningActionIndex(1);
+        return { changed: true, requestClose: false };
+      }
+
+      if (input === 'TAP') {
+        if (this.store.getState().listeningActionIndex === 0) {
+          this.store.continueListeningAndStartActiveCall();
+        } else {
+          this.store.endListening();
+        }
+
+        return { changed: true, requestClose: false };
+      }
+
+      if (input === 'DOUBLE_TAP') {
+        this.store.endListening();
+        return { changed: true, requestClose: false };
+      }
+
+      return { changed: false, requestClose: false };
     }
 
     if (state.screen === 'active') {
@@ -149,7 +178,6 @@ export class AppGlasses {
       return { changed: false, requestClose: input === 'DOUBLE_TAP' };
     }
 
-    // listening is scaffold-only and intentionally unreachable in normal phase-1 navigation.
     return { changed: false, requestClose: false };
   }
 
@@ -192,6 +220,11 @@ export class AppGlasses {
 
     if (state.screen === 'active') {
       this.store.setActiveActionIndex(index);
+      return;
+    }
+
+    if (state.screen === 'listening') {
+      this.store.setListeningActionIndex(index);
       return;
     }
 

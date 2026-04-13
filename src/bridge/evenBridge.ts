@@ -7,6 +7,7 @@ import { AppGlasses } from '../glass/AppGlasses';
 import { EvenInputNormalizer } from './eventNormalizer';
 import { SerializedImageQueue } from './imageQueue';
 import { StartupLifecycleManager } from './startupLifecycle';
+import { AudioCaptureController } from './audio';
 
 function normalizedInputToRawInteraction(input: 'UP' | 'DOWN' | 'TAP' | 'DOUBLE_TAP') {
   if (input === 'UP') {
@@ -52,6 +53,8 @@ export class EvenBridgeApp {
   private glassesSyncTimer: number | null = null;
   private lastRenderedPortraitAsset: string | null = null;
   private lastSyncSignature = '';
+  private unsubscribeStore: (() => void) | null = null;
+  private readonly audioCapture = new AudioCaptureController({ maxBufferDurationMs: 10_000 });
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -131,6 +134,7 @@ export class EvenBridgeApp {
 
       this.store.setStarted(true);
       this.setupEvenHubEventListener();
+      this.setupStoreAudioLifecycle();
       this.store.log('Startup lifecycle complete: rebuild flow ready.');
       await this.syncNow(true);
     } catch (error) {
@@ -180,6 +184,14 @@ export class EvenBridgeApp {
     this.imageQueue?.reset();
     this.lastRenderedPortraitAsset = null;
     this.lastSyncSignature = '';
+    this.audioCapture.clearBuffer();
+
+    if (this.unsubscribeStore) {
+      this.unsubscribeStore();
+      this.unsubscribeStore = null;
+    }
+
+    void this.closeMicIfNeeded('cleanup');
   }
 
   private setupEvenHubEventListener() {
@@ -227,11 +239,73 @@ export class EvenBridgeApp {
     this.store.log('Input listener ready (UP/DOWN/TAP/DOUBLE TAP).');
   }
 
+  private setupStoreAudioLifecycle() {
+    if (this.unsubscribeStore) {
+      this.unsubscribeStore();
+      this.unsubscribeStore = null;
+    }
+
+    this.unsubscribeStore = this.store.subscribe(() => {
+      void this.syncMicForCurrentState();
+    });
+
+    void this.syncMicForCurrentState();
+  }
+
+  private async syncMicForCurrentState() {
+    if (!this.bridge) {
+      return;
+    }
+
+    const state = this.store.getState();
+    const shouldBeOpen = state.started && state.screen === 'listening';
+    if (shouldBeOpen) {
+      if (!this.audioCapture.isMicOpen() && state.audioCaptureStatus !== 'opening') {
+        this.store.setAudioCaptureStatus('opening', { micOpen: false, error: null });
+        this.store.log('Mic open requested (entered listening).');
+        const opened = await this.audioCapture.requestMicOpen(this.bridge);
+        const afterOpenState = this.store.getState();
+        const stillShouldBeOpen = afterOpenState.started && afterOpenState.screen === 'listening';
+        if (!stillShouldBeOpen) {
+          this.store.log('Mic open completed after listening exit; closing mic for reconciliation.');
+          await this.closeMicIfNeeded('post-open-reconcile');
+          return;
+        }
+
+        this.store.setAudioCaptureStatus(opened.status, { micOpen: opened.micOpen, error: opened.error });
+        this.store.log(opened.ok ? 'Mic open success.' : `Mic open failed: ${opened.error ?? 'unknown error'}`);
+      }
+      return;
+    }
+
+    await this.closeMicIfNeeded(`state-sync:${state.screen}`);
+  }
+
+  private async closeMicIfNeeded(reason: string) {
+    if (!this.bridge || !this.audioCapture.isMicOpen()) {
+      if (this.store.getState().micOpen || this.store.getState().audioCaptureStatus !== 'idle') {
+        this.store.setAudioCaptureStatus('idle', { micOpen: false, error: null });
+      }
+      return;
+    }
+
+    if (this.store.getState().audioCaptureStatus === 'closing') {
+      return;
+    }
+
+    this.store.setAudioCaptureStatus('closing', { micOpen: true, error: null });
+    this.store.log(`Mic close requested (${reason}).`);
+    const closed = await this.audioCapture.requestMicClose(this.bridge);
+    this.store.setAudioCaptureStatus(closed.status, { micOpen: closed.micOpen, error: closed.error });
+    this.store.log(closed.ok ? `Mic close success (${reason}).` : `Mic close failed (${reason}): ${closed.error ?? 'unknown error'}`);
+  }
+
   private async requestClose() {
     if (!this.startupLifecycle) {
       return;
     }
 
+    await this.closeMicIfNeeded('close-request');
     await this.startupLifecycle.shutdown('close-request').catch((error) => {
       this.store.log(`Close request failed: ${String(error)}`);
     });
@@ -239,6 +313,14 @@ export class EvenBridgeApp {
   }
 
   private handleEvenHubEvent(event: EvenHubEvent) {
+    if (event.audioEvent?.audioPcm) {
+      this.handleAudioEvent(event);
+    }
+
+    if (!event.listEvent && !event.textEvent && !event.sysEvent) {
+      return;
+    }
+
     if (!this.feedbackManager) {
       return;
     }
@@ -266,6 +348,24 @@ export class EvenBridgeApp {
 
       handledPrimaryAction = true;
       this.feedbackManager.handleRawInteraction(normalizedInputToRawInteraction(item.input));
+    }
+  }
+
+  private handleAudioEvent(event: EvenHubEvent) {
+    const state = this.store.getState();
+    if (state.screen !== 'listening' || !state.started) {
+      this.store.log(`Audio frame dropped (screen=${state.screen}, started=${state.started ? 'yes' : 'no'}).`);
+      return;
+    }
+
+    const metrics = this.audioCapture.ingestAudioEvent(event);
+    if (!metrics) {
+      return;
+    }
+
+    this.store.updateAudioCaptureMetrics(metrics);
+    if (state.audioCaptureStatus !== 'listening' || !state.micOpen) {
+      this.store.setAudioCaptureStatus('listening', { micOpen: true, error: null });
     }
   }
 
@@ -348,9 +448,15 @@ export class EvenBridgeApp {
       screenBeforeDebug: state.screenBeforeDebug,
       selectedContactIndex: state.selectedContactIndex,
       incomingActionIndex: state.incomingActionIndex,
+      listeningActionIndex: state.listeningActionIndex,
       activeActionIndex: state.activeActionIndex,
       endedActionIndex: state.endedActionIndex,
       dialogueIndex: state.dialogueIndex,
+      micOpen: state.micOpen,
+      audioCaptureStatus: state.audioCaptureStatus,
+      audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 500),
+      activityBucket: Math.floor(state.listeningActivityLevel * 10),
+      frameAtBucket: state.lastAudioFrameAt ? Math.floor(state.lastAudioFrameAt / 1000) : null,
       lastNormalizedInput: state.lastNormalizedInput,
       lastRawEventType: state.lastRawEvent?.rawEventTypeName ?? null,
     });

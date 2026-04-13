@@ -1,6 +1,5 @@
 import './style.css';
 import { AppStore } from './app/state';
-import { createAudioScaffold } from './bridge/audio';
 import { EvenBridgeApp } from './bridge/evenBridge';
 import { AppGlasses } from './glass/AppGlasses';
 import { AppWeb } from './web/AppWeb';
@@ -12,10 +11,16 @@ function getBridgeSyncSignature(state: AppState) {
     screenBeforeDebug: state.screenBeforeDebug,
     selectedContactIndex: state.selectedContactIndex,
     incomingActionIndex: state.incomingActionIndex,
+    listeningActionIndex: state.listeningActionIndex,
     activeActionIndex: state.activeActionIndex,
     endedActionIndex: state.endedActionIndex,
     dialogueIndex: state.dialogueIndex,
     started: state.started,
+    audioCaptureStatus: state.audioCaptureStatus,
+    micOpen: state.micOpen,
+    audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 500),
+    audioActivityBucket: Math.floor(state.listeningActivityLevel * 10),
+    audioFrameAtBucket: state.lastAudioFrameAt ? Math.floor(state.lastAudioFrameAt / 1000) : null,
     lastNormalizedInput: state.lastNormalizedInput,
     lastRawEventType: state.lastRawEvent?.rawEventTypeName ?? null,
   });
@@ -24,11 +29,6 @@ function getBridgeSyncSignature(state: AppState) {
 const store = new AppStore();
 const glassesApp = new AppGlasses(store);
 const bridgeApp = new EvenBridgeApp(store, glassesApp);
-const audioScaffold = createAudioScaffold();
-
-if (import.meta.env.DEV) {
-  store.log(`Audio scaffold ready (turnState=${audioScaffold.turnState}, micEnabled=${audioScaffold.micEnabled}).`);
-}
 
 const webApp = new AppWeb({
   store,

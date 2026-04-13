@@ -4,7 +4,7 @@ import { buildContactsScreen } from './screens/contacts';
 import { buildDebugScreen } from './screens/debug';
 import { buildEndedScreen } from './screens/ended';
 import { buildIncomingScreen } from './screens/incoming';
-import { buildListeningScreenScaffold } from './screens/listening';
+import { buildListeningScreen } from './screens/listening';
 import type { GlassScreenView } from './shared';
 
 export function selectGlassScreenView(state: AppState): GlassScreenView {
@@ -28,7 +28,7 @@ export function selectGlassScreenView(state: AppState): GlassScreenView {
     return buildDebugScreen(state);
   }
 
-  return buildListeningScreenScaffold(state);
+  return buildListeningScreen(state);
 }
 
 export function selectDialogueForGlasses(state: AppState) {

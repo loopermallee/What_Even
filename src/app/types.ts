@@ -39,15 +39,12 @@ export type TranscriptEntry = {
   createdAt: number;
 };
 
+export type AudioCaptureStatus = 'idle' | 'opening' | 'listening' | 'closing' | 'error';
+
 export type ImageSyncDebugInfo = {
   lastPortraitAsset: string | null;
   lastResult: 'idle' | 'success' | 'failed';
   lastAt: number | null;
-};
-
-export type ListeningScaffoldState = {
-  enabledInPhase1: false;
-  note: string;
 };
 
 export type AppState = {
@@ -56,6 +53,7 @@ export type AppState = {
   started: boolean;
   selectedContactIndex: number;
   incomingActionIndex: number;
+  listeningActionIndex: number;
   activeActionIndex: number;
   endedActionIndex: number;
   dialogueIndex: number;
@@ -64,6 +62,13 @@ export type AppState = {
   lastNormalizedInput: NormalizedInput | null;
   lastRawEvent: RawEventDebugInfo | null;
   imageSync: ImageSyncDebugInfo;
-  listeningScaffold: ListeningScaffoldState;
+  audioCaptureStatus: AudioCaptureStatus;
+  micOpen: boolean;
+  audioFrameCount: number;
+  audioBufferByteLength: number;
+  bufferedAudioDurationMs: number;
+  lastAudioFrameAt: number | null;
+  listeningActivityLevel: number;
+  audioError: string | null;
   logs: string[];
 };
