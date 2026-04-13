@@ -39,11 +39,12 @@ function getCompanionSpeakerAndLine(state: AppState) {
   }
 
   if (state.screen === 'listening') {
-    const frameAgeMs = state.lastAudioFrameAt === null ? null : Math.max(0, Date.now() - state.lastAudioFrameAt);
-    const freshness = frameAgeMs === null ? 'no frames yet' : frameAgeMs <= 1000 ? 'live' : `stale (${frameAgeMs}ms old)`;
+    const partial = state.sttPartialTranscript.trim();
+    const lastCommitted = [...state.transcript].reverse().find((entry) => entry.text.trim().length > 0)?.text ?? 'none yet';
+    const status = state.sttError ? `${state.sttStatus} (error)` : state.sttStatus;
     return {
       speaker: 'LISTENING',
-      text: `Mic ${state.micOpen ? 'open' : 'closed'} | status=${state.audioCaptureStatus} | buffered=${state.bufferedAudioDurationMs}ms (${state.audioBufferByteLength} bytes, ${state.audioFrameCount} chunks) | ${freshness}`,
+      text: `STT ${status} | Partial: ${partial || '...'} | Last: ${lastCommitted} | Audio: mic ${state.micOpen ? 'open' : 'closed'} / ${state.audioCaptureStatus}`,
       leftActive: true,
       rightActive: false,
     };
@@ -152,6 +153,10 @@ export class AppWeb {
           <div>Image Sync: <strong>${state.imageSync.lastResult}</strong></div>
           <div>Mic Open: <strong>${state.micOpen ? 'yes' : 'no'}</strong></div>
           <div>Capture Status: <strong>${state.audioCaptureStatus}</strong></div>
+          <div>STT Status: <strong>${state.sttStatus}</strong></div>
+          <div>STT Partial: <strong>${state.sttPartialTranscript || 'none'}</strong></div>
+          <div>Last Transcript At: <strong>${state.lastTranscriptAt === null ? 'none' : new Date(state.lastTranscriptAt).toLocaleTimeString()}</strong></div>
+          <div>STT Error: <strong>${state.sttError ?? 'none'}</strong></div>
           <div>Buffered Duration: <strong>${state.bufferedAudioDurationMs} ms</strong></div>
           <div>Buffered Bytes: <strong>${state.audioBufferByteLength}</strong></div>
           <div>Buffered Chunks: <strong>${state.audioFrameCount}</strong></div>

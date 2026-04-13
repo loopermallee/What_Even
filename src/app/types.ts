@@ -33,6 +33,7 @@ export type RawEventDebugInfo = {
 };
 
 export type TranscriptEntry = {
+  role: 'user' | 'contact' | 'system';
   speaker: string;
   text: string;
   contactName: string;
@@ -40,6 +41,7 @@ export type TranscriptEntry = {
 };
 
 export type AudioCaptureStatus = 'idle' | 'opening' | 'listening' | 'closing' | 'error';
+export type SttStatus = 'idle' | 'connecting' | 'streaming' | 'closing' | 'error';
 
 export type ImageSyncDebugInfo = {
   lastPortraitAsset: string | null;
@@ -70,5 +72,10 @@ export type AppState = {
   lastAudioFrameAt: number | null;
   listeningActivityLevel: number;
   audioError: string | null;
+  sttStatus: SttStatus;
+  sttPartialTranscript: string;
+  lastTranscriptAt: number | null;
+  sttError: string | null;
+  listeningSessionId: number;
   logs: string[];
 };

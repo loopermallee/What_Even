@@ -6,6 +6,7 @@ import type {
   DevicePageLifecycleState,
   NormalizedInput,
   RawEventDebugInfo,
+  SttStatus,
   TranscriptEntry,
 } from './types';
 
@@ -63,6 +64,16 @@ function createInitialAudioCaptureState() {
   };
 }
 
+function createInitialSttState(listeningSessionId: number) {
+  return {
+    sttStatus: 'idle' as SttStatus,
+    sttPartialTranscript: '',
+    lastTranscriptAt: null as number | null,
+    sttError: null as string | null,
+    listeningSessionId,
+  };
+}
+
 export function createInitialState(): AppState {
   return {
     screen: 'contacts',
@@ -84,6 +95,7 @@ export function createInitialState(): AppState {
       lastAt: null,
     },
     ...createInitialAudioCaptureState(),
+    ...createInitialSttState(0),
     logs: [],
   };
 }
@@ -210,29 +222,34 @@ export class AppStore {
       dialogueIndex: -1,
       transcript: [],
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
   answerIncomingAndStartListening() {
+    const listeningSessionId = this.state.listeningSessionId + 1;
     this.patch({
       screen: 'listening',
       listeningActionIndex: 0,
       activeActionIndex: 0,
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(listeningSessionId),
     });
   }
 
   continueListeningAndStartActiveCall() {
     const contact = CONTACTS[this.state.selectedContactIndex];
     const line = contact.dialogue[0];
-    const transcript: TranscriptEntry[] = line
-      ? [{
+    const transcript: TranscriptEntry[] = [...this.state.transcript];
+    if (line) {
+      transcript.push({
+        role: line.speaker === 'left' ? 'contact' : 'system',
         speaker: line.speaker === 'left' ? contact.name.toUpperCase() : RIGHT_CHARACTER.name.toUpperCase(),
         text: line.text,
         contactName: contact.name,
         createdAt: Date.now(),
-      }]
-      : [];
+      });
+    }
 
     this.patch({
       screen: 'active',
@@ -240,6 +257,7 @@ export class AppStore {
       activeActionIndex: 0,
       transcript,
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
@@ -248,6 +266,7 @@ export class AppStore {
       screen: 'ended',
       endedActionIndex: 0,
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
@@ -268,6 +287,7 @@ export class AppStore {
     const line = contact.dialogue[nextIndex];
     const entry: TranscriptEntry | null = line
       ? {
+        role: line.speaker === 'left' ? 'contact' : 'system',
         speaker: line.speaker === 'left' ? contact.name.toUpperCase() : RIGHT_CHARACTER.name.toUpperCase(),
         text: line.text,
         contactName: contact.name,
@@ -286,6 +306,7 @@ export class AppStore {
       screen: 'ended',
       endedActionIndex: 0,
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
@@ -294,6 +315,7 @@ export class AppStore {
       screen: 'ended',
       endedActionIndex: 0,
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
@@ -307,6 +329,7 @@ export class AppStore {
       dialogueIndex: -1,
       transcript: [],
       ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
     });
   }
 
@@ -345,6 +368,42 @@ export class AppStore {
       bufferedAudioDurationMs: update.bufferedAudioDurationMs,
       lastAudioFrameAt: update.lastAudioFrameAt,
       listeningActivityLevel: update.listeningActivityLevel,
+    });
+  }
+
+  setSttStatus(status: SttStatus, options?: { error?: string | null }) {
+    const patch: Partial<AppState> = {
+      sttStatus: status,
+    };
+
+    if (options && 'error' in options) {
+      patch.sttError = options.error ?? null;
+    } else if (status !== 'error') {
+      patch.sttError = null;
+    }
+
+    this.patch(patch);
+  }
+
+  setSttPartialTranscript(text: string) {
+    this.patch({
+      sttPartialTranscript: text,
+      lastTranscriptAt: Date.now(),
+    });
+  }
+
+  clearSttPartialTranscript() {
+    if (!this.state.sttPartialTranscript) {
+      return;
+    }
+
+    this.patch({ sttPartialTranscript: '' });
+  }
+
+  commitTranscriptEntry(entry: TranscriptEntry) {
+    this.patch({
+      transcript: [...this.state.transcript, entry],
+      lastTranscriptAt: Date.now(),
     });
   }
 }

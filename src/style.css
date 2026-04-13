@@ -396,6 +396,22 @@ button:disabled {
   margin-bottom: 6px;
 }
 
+.transcript-partial {
+  color: #fff2ba;
+}
+
+.transcript-role-user {
+  color: #f2fff7;
+}
+
+.transcript-role-contact {
+  color: #d7ffe8;
+}
+
+.transcript-role-system {
+  color: #c7f4ff;
+}
+
 .transcript-speaker {
   color: #92e7b6;
   font-weight: 700;

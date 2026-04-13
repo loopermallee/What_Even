@@ -1,4 +1,5 @@
 import { waitForEvenAppBridge, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
+import { CONTACTS } from '../app/contacts';
 import { AppStore } from '../app/state';
 import { GLASSES_CONTAINERS } from '../glass/shared';
 import { getCodecAssetBytes } from '../codecGlassesAssets';
@@ -8,6 +9,7 @@ import { EvenInputNormalizer } from './eventNormalizer';
 import { SerializedImageQueue } from './imageQueue';
 import { StartupLifecycleManager } from './startupLifecycle';
 import { AudioCaptureController } from './audio';
+import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
 
 function normalizedInputToRawInteraction(input: 'UP' | 'DOWN' | 'TAP' | 'DOUBLE_TAP') {
   if (input === 'UP') {
@@ -55,6 +57,10 @@ export class EvenBridgeApp {
   private lastSyncSignature = '';
   private unsubscribeStore: (() => void) | null = null;
   private readonly audioCapture = new AudioCaptureController({ maxBufferDurationMs: 10_000 });
+  private sttSession: StreamingSttSession | null = null;
+  private activeSttListeningSessionId: number | null = null;
+  private sttReconnectAttemptedSessionId: number | null = null;
+  private sttCommittedFinals = new Set<string>();
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -191,6 +197,7 @@ export class EvenBridgeApp {
       this.unsubscribeStore = null;
     }
 
+    void this.stopSttIfNeeded('cleanup');
     void this.closeMicIfNeeded('cleanup');
   }
 
@@ -275,9 +282,12 @@ export class EvenBridgeApp {
         this.store.setAudioCaptureStatus(opened.status, { micOpen: opened.micOpen, error: opened.error });
         this.store.log(opened.ok ? 'Mic open success.' : `Mic open failed: ${opened.error ?? 'unknown error'}`);
       }
+
+      await this.ensureSttForCurrentState();
       return;
     }
 
+    await this.stopSttIfNeeded(`state-sync:${state.screen}`);
     await this.closeMicIfNeeded(`state-sync:${state.screen}`);
   }
 
@@ -305,6 +315,7 @@ export class EvenBridgeApp {
       return;
     }
 
+    await this.stopSttIfNeeded('close-request');
     await this.closeMicIfNeeded('close-request');
     await this.startupLifecycle.shutdown('close-request').catch((error) => {
       this.store.log(`Close request failed: ${String(error)}`);
@@ -352,6 +363,11 @@ export class EvenBridgeApp {
   }
 
   private handleAudioEvent(event: EvenHubEvent) {
+    const audioPcm = event.audioEvent?.audioPcm;
+    if (!audioPcm) {
+      return;
+    }
+
     const state = this.store.getState();
     if (state.screen !== 'listening' || !state.started) {
       this.store.log(`Audio frame dropped (screen=${state.screen}, started=${state.started ? 'yes' : 'no'}).`);
@@ -366,6 +382,12 @@ export class EvenBridgeApp {
     this.store.updateAudioCaptureMetrics(metrics);
     if (state.audioCaptureStatus !== 'listening' || !state.micOpen) {
       this.store.setAudioCaptureStatus('listening', { micOpen: true, error: null });
+    }
+
+    if (this.sttSession && this.activeSttListeningSessionId !== null && this.canApplySttCallback(this.activeSttListeningSessionId)) {
+      void this.sttSession.sendAudio(audioPcm).catch((error) => {
+        this.store.log(`STT audio send failed: ${String(error)}`);
+      });
     }
   }
 
@@ -454,11 +476,198 @@ export class EvenBridgeApp {
       dialogueIndex: state.dialogueIndex,
       micOpen: state.micOpen,
       audioCaptureStatus: state.audioCaptureStatus,
+      sttStatus: state.sttStatus,
+      sttPartialBucket: state.sttPartialTranscript ? state.sttPartialTranscript.slice(0, 64) : null,
+      sttError: state.sttError,
       audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 500),
       activityBucket: Math.floor(state.listeningActivityLevel * 10),
       frameAtBucket: state.lastAudioFrameAt ? Math.floor(state.lastAudioFrameAt / 1000) : null,
       lastNormalizedInput: state.lastNormalizedInput,
       lastRawEventType: state.lastRawEvent?.rawEventTypeName ?? null,
     });
+  }
+
+  private async ensureSttForCurrentState() {
+    const state = this.store.getState();
+    if (!state.started || state.screen !== 'listening') {
+      return;
+    }
+
+    if (state.sttStatus === 'error') {
+      return;
+    }
+
+    if (!state.micOpen || state.audioCaptureStatus !== 'listening') {
+      return;
+    }
+
+    if (this.activeSttListeningSessionId !== null && this.activeSttListeningSessionId !== state.listeningSessionId) {
+      await this.stopSttIfNeeded('session-rollover');
+    }
+
+    if (this.sttSession) {
+      return;
+    }
+
+    await this.startSttSessionForListening(state.listeningSessionId, false);
+  }
+
+  private async startSttSessionForListening(listeningSessionId: number, isRetry: boolean) {
+    const apiKey = String(import.meta.env.VITE_DEEPGRAM_API_KEY ?? '').trim();
+    if (!apiKey) {
+      this.store.setSttStatus('error', { error: 'Missing VITE_DEEPGRAM_API_KEY (dev-only path).' });
+      this.store.log('STT start failed: VITE_DEEPGRAM_API_KEY is missing. Production should use a backend token broker.');
+      return;
+    }
+
+    const wsUrl = String(import.meta.env.VITE_DEEPGRAM_WS_URL ?? '').trim() || undefined;
+    const session = new DeepgramStreamingSttSession({ apiKey, wsUrl });
+    this.sttSession = session;
+    this.activeSttListeningSessionId = listeningSessionId;
+    this.sttCommittedFinals = new Set<string>();
+    this.store.setSttStatus('connecting', { error: null });
+
+    session.onStateChange((nextState) => {
+      if (!this.canApplySttCallback(listeningSessionId)) {
+        return;
+      }
+
+      if (nextState === 'error') {
+        this.store.clearSttPartialTranscript();
+      }
+      this.store.setSttStatus(nextState, nextState === 'error' ? { error: 'STT stream entered error state.' } : { error: null });
+    });
+
+    session.onPartial((text) => {
+      if (!this.canApplySttCallback(listeningSessionId)) {
+        return;
+      }
+
+      this.store.setSttPartialTranscript(text);
+    });
+
+    session.onFinal((text) => {
+      if (!this.canApplySttCallback(listeningSessionId)) {
+        return;
+      }
+
+      this.commitSttFinal(text);
+    });
+
+    session.onError((error) => {
+      if (!this.canApplySttCallback(listeningSessionId)) {
+        return;
+      }
+
+      void this.handleSttErrorForSession(listeningSessionId, error);
+    });
+
+    try {
+      await session.start();
+      if (!this.canApplySttCallback(listeningSessionId)) {
+        await this.stopSttIfNeeded('post-start-reconcile');
+      }
+    } catch (error) {
+      if (this.sttSession === session) {
+        this.sttSession = null;
+        this.activeSttListeningSessionId = null;
+      }
+      this.store.log(`STT start failed: ${String(error)}`);
+      if (!this.canApplySttCallback(listeningSessionId)) {
+        return;
+      }
+
+      if (!isRetry && this.sttReconnectAttemptedSessionId !== listeningSessionId) {
+        await this.handleSttErrorForSession(listeningSessionId, String(error));
+        return;
+      }
+
+      this.store.setSttStatus('error', { error: `STT start failed: ${String(error)}` });
+    }
+  }
+
+  private async stopSttIfNeeded(reason: string) {
+    if (!this.sttSession) {
+      if (this.store.getState().sttStatus !== 'idle' || this.store.getState().sttPartialTranscript) {
+        this.store.clearSttPartialTranscript();
+        this.store.setSttStatus('idle', { error: null });
+      }
+      return;
+    }
+
+    this.store.clearSttPartialTranscript();
+    this.store.setSttStatus('closing', { error: null });
+    this.store.log(`STT close requested (${reason}).`);
+    const session = this.sttSession;
+    this.sttSession = null;
+    this.activeSttListeningSessionId = null;
+    this.sttCommittedFinals = new Set<string>();
+
+    try {
+      await session.stop();
+      this.store.setSttStatus('idle', { error: null });
+      this.store.log(`STT close success (${reason}).`);
+    } catch (error) {
+      this.store.setSttStatus('error', { error: `STT close failed: ${String(error)}` });
+      this.store.log(`STT close failed (${reason}): ${String(error)}`);
+    }
+  }
+
+  private canApplySttCallback(listeningSessionId: number) {
+    const state = this.store.getState();
+    return (
+      state.started &&
+      state.screen === 'listening' &&
+      state.listeningSessionId === listeningSessionId
+    );
+  }
+
+  private commitSttFinal(text: string) {
+    const normalized = text.trim();
+    if (!normalized) {
+      return;
+    }
+
+    const dedupeKey = normalized.toLowerCase();
+    if (this.sttCommittedFinals.has(dedupeKey)) {
+      return;
+    }
+
+    this.sttCommittedFinals.add(dedupeKey);
+    this.store.commitTranscriptEntry({
+      role: 'user',
+      speaker: 'YOU',
+      text: normalized,
+      contactName: this.currentContactName(),
+      createdAt: Date.now(),
+    });
+    this.store.clearSttPartialTranscript();
+  }
+
+  private async handleSttErrorForSession(listeningSessionId: number, error: string) {
+    if (!this.canApplySttCallback(listeningSessionId)) {
+      return;
+    }
+
+    this.store.clearSttPartialTranscript();
+
+    if (this.sttReconnectAttemptedSessionId === listeningSessionId) {
+      this.store.setSttStatus('error', { error: `STT error: ${error}` });
+      return;
+    }
+
+    this.sttReconnectAttemptedSessionId = listeningSessionId;
+    this.store.log(`STT error: ${error}. Retrying once...`);
+    await this.stopSttIfNeeded('stt-retry');
+    if (!this.canApplySttCallback(listeningSessionId)) {
+      return;
+    }
+
+    await this.startSttSessionForListening(listeningSessionId, true);
+  }
+
+  private currentContactName() {
+    const state = this.store.getState();
+    return CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown';
   }
 }

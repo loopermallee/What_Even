@@ -54,7 +54,7 @@ export function renderCodecShell(state: AppState, options: {
       </div>
 
       <div class="transcript-panel">
-        ${renderTranscriptPanel(state.transcript)}
+        ${renderTranscriptPanel(state.transcript, { partialText: state.sttPartialTranscript })}
       </div>
     </div>
   `;
