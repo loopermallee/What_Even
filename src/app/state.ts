@@ -400,6 +400,30 @@ export class AppStore {
     this.patch({ sttPartialTranscript: '' });
   }
 
+  commitUserFinalTranscript(text: string, options?: { speaker?: string; contactName?: string }) {
+    const normalized = text.trim();
+    if (!normalized) {
+      return false;
+    }
+
+    const contactName = options?.contactName ?? CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    this.patch({
+      transcript: [
+        ...this.state.transcript,
+        {
+          role: 'user',
+          speaker: options?.speaker ?? 'YOU',
+          text: normalized,
+          contactName,
+          createdAt: Date.now(),
+        },
+      ],
+      sttPartialTranscript: '',
+      lastTranscriptAt: Date.now(),
+    });
+    return true;
+  }
+
   commitTranscriptEntry(entry: TranscriptEntry) {
     this.patch({
       transcript: [...this.state.transcript, entry],

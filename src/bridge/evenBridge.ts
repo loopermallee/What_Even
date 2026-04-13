@@ -59,8 +59,13 @@ export class EvenBridgeApp {
   private readonly audioCapture = new AudioCaptureController({ maxBufferDurationMs: 10_000 });
   private sttSession: StreamingSttSession | null = null;
   private activeSttListeningSessionId: number | null = null;
+  private activeSttSessionToken: number | null = null;
+  private nextSttSessionToken = 1;
   private sttReconnectAttemptedSessionId: number | null = null;
-  private sttCommittedFinals = new Set<string>();
+  private sttRetryTimer: number | null = null;
+  private lastCommittedFinal: { sessionToken: number; text: string; at: number } | null = null;
+  private readonly sttRetryDelayMs = 350;
+  private readonly sttAdjacentFinalDedupeWindowMs = 1200;
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -191,6 +196,7 @@ export class EvenBridgeApp {
     this.lastRenderedPortraitAsset = null;
     this.lastSyncSignature = '';
     this.audioCapture.clearBuffer();
+    this.clearSttRetryTimer();
 
     if (this.unsubscribeStore) {
       this.unsubscribeStore();
@@ -384,8 +390,15 @@ export class EvenBridgeApp {
       this.store.setAudioCaptureStatus('listening', { micOpen: true, error: null });
     }
 
-    if (this.sttSession && this.activeSttListeningSessionId !== null && this.canApplySttCallback(this.activeSttListeningSessionId)) {
-      void this.sttSession.sendAudio(audioPcm).catch((error) => {
+    const sttSession = this.sttSession;
+    const sttSessionToken = this.activeSttSessionToken;
+    if (
+      sttSession &&
+      sttSessionToken !== null &&
+      this.activeSttListeningSessionId !== null &&
+      this.canApplySttCallback(this.activeSttListeningSessionId, sttSessionToken, sttSession)
+    ) {
+      void sttSession.sendAudio(audioPcm).catch((error) => {
         this.store.log(`STT audio send failed: ${String(error)}`);
       });
     }
@@ -497,7 +510,7 @@ export class EvenBridgeApp {
       return;
     }
 
-    if (!state.micOpen || state.audioCaptureStatus !== 'listening') {
+    if (!state.micOpen || state.audioCaptureStatus !== 'listening' || !this.audioCapture.isMicOpen()) {
       return;
     }
 
@@ -513,6 +526,17 @@ export class EvenBridgeApp {
   }
 
   private async startSttSessionForListening(listeningSessionId: number, isRetry: boolean) {
+    this.clearSttRetryTimer();
+
+    const state = this.store.getState();
+    if (!state.started || state.screen !== 'listening' || state.listeningSessionId !== listeningSessionId) {
+      return;
+    }
+
+    if (!state.micOpen || state.audioCaptureStatus !== 'listening' || !this.audioCapture.isMicOpen()) {
+      return;
+    }
+
     const apiKey = String(import.meta.env.VITE_DEEPGRAM_API_KEY ?? '').trim();
     if (!apiKey) {
       this.store.setSttStatus('error', { error: 'Missing VITE_DEEPGRAM_API_KEY (dev-only path).' });
@@ -522,13 +546,15 @@ export class EvenBridgeApp {
 
     const wsUrl = String(import.meta.env.VITE_DEEPGRAM_WS_URL ?? '').trim() || undefined;
     const session = new DeepgramStreamingSttSession({ apiKey, wsUrl });
+    const sttSessionToken = this.nextSttSessionToken++;
     this.sttSession = session;
     this.activeSttListeningSessionId = listeningSessionId;
-    this.sttCommittedFinals = new Set<string>();
+    this.activeSttSessionToken = sttSessionToken;
+    this.lastCommittedFinal = null;
     this.store.setSttStatus('connecting', { error: null });
 
     session.onStateChange((nextState) => {
-      if (!this.canApplySttCallback(listeningSessionId)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
         return;
       }
 
@@ -539,7 +565,7 @@ export class EvenBridgeApp {
     });
 
     session.onPartial((text) => {
-      if (!this.canApplySttCallback(listeningSessionId)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
         return;
       }
 
@@ -547,38 +573,39 @@ export class EvenBridgeApp {
     });
 
     session.onFinal((text) => {
-      if (!this.canApplySttCallback(listeningSessionId)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
         return;
       }
 
-      this.commitSttFinal(text);
+      this.commitSttFinal(sttSessionToken, text);
     });
 
     session.onError((error) => {
-      if (!this.canApplySttCallback(listeningSessionId)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
         return;
       }
 
-      void this.handleSttErrorForSession(listeningSessionId, error);
+      void this.handleSttErrorForSession(listeningSessionId, sttSessionToken, session, error);
     });
 
     try {
       await session.start();
-      if (!this.canApplySttCallback(listeningSessionId)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
         await this.stopSttIfNeeded('post-start-reconcile');
       }
     } catch (error) {
       if (this.sttSession === session) {
         this.sttSession = null;
         this.activeSttListeningSessionId = null;
+        this.activeSttSessionToken = null;
       }
       this.store.log(`STT start failed: ${String(error)}`);
-      if (!this.canApplySttCallback(listeningSessionId)) {
+      if (!this.isListeningSessionActive(listeningSessionId)) {
         return;
       }
 
       if (!isRetry && this.sttReconnectAttemptedSessionId !== listeningSessionId) {
-        await this.handleSttErrorForSession(listeningSessionId, String(error));
+        await this.handleSttErrorForSession(listeningSessionId, sttSessionToken, session, String(error));
         return;
       }
 
@@ -587,11 +614,15 @@ export class EvenBridgeApp {
   }
 
   private async stopSttIfNeeded(reason: string) {
+    this.clearSttRetryTimer();
+
     if (!this.sttSession) {
       if (this.store.getState().sttStatus !== 'idle' || this.store.getState().sttPartialTranscript) {
         this.store.clearSttPartialTranscript();
         this.store.setSttStatus('idle', { error: null });
       }
+      this.activeSttSessionToken = null;
+      this.lastCommittedFinal = null;
       return;
     }
 
@@ -601,7 +632,8 @@ export class EvenBridgeApp {
     const session = this.sttSession;
     this.sttSession = null;
     this.activeSttListeningSessionId = null;
-    this.sttCommittedFinals = new Set<string>();
+    this.activeSttSessionToken = null;
+    this.lastCommittedFinal = null;
 
     try {
       await session.stop();
@@ -613,7 +645,16 @@ export class EvenBridgeApp {
     }
   }
 
-  private canApplySttCallback(listeningSessionId: number) {
+  private clearSttRetryTimer() {
+    if (this.sttRetryTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.sttRetryTimer);
+    this.sttRetryTimer = null;
+  }
+
+  private isListeningSessionActive(listeningSessionId: number) {
     const state = this.store.getState();
     return (
       state.started &&
@@ -622,30 +663,54 @@ export class EvenBridgeApp {
     );
   }
 
-  private commitSttFinal(text: string) {
+  private canApplySttCallback(listeningSessionId: number, sttSessionToken: number, session: StreamingSttSession) {
+    return (
+      this.isListeningSessionActive(listeningSessionId) &&
+      this.activeSttListeningSessionId === listeningSessionId &&
+      this.activeSttSessionToken === sttSessionToken &&
+      this.sttSession === session
+    );
+  }
+
+  private commitSttFinal(sttSessionToken: number, text: string) {
     const normalized = text.trim();
     if (!normalized) {
       return;
     }
 
-    const dedupeKey = normalized.toLowerCase();
-    if (this.sttCommittedFinals.has(dedupeKey)) {
+    const now = Date.now();
+    const dedupeText = normalized.toLowerCase();
+    if (
+      this.lastCommittedFinal &&
+      this.lastCommittedFinal.sessionToken === sttSessionToken &&
+      this.lastCommittedFinal.text === dedupeText &&
+      now - this.lastCommittedFinal.at <= this.sttAdjacentFinalDedupeWindowMs
+    ) {
       return;
     }
 
-    this.sttCommittedFinals.add(dedupeKey);
-    this.store.commitTranscriptEntry({
-      role: 'user',
+    const committed = this.store.commitUserFinalTranscript(normalized, {
       speaker: 'YOU',
-      text: normalized,
       contactName: this.currentContactName(),
-      createdAt: Date.now(),
     });
-    this.store.clearSttPartialTranscript();
+    if (!committed) {
+      return;
+    }
+
+    this.lastCommittedFinal = {
+      sessionToken: sttSessionToken,
+      text: dedupeText,
+      at: now,
+    };
   }
 
-  private async handleSttErrorForSession(listeningSessionId: number, error: string) {
-    if (!this.canApplySttCallback(listeningSessionId)) {
+  private async handleSttErrorForSession(
+    listeningSessionId: number,
+    sttSessionToken: number,
+    session: StreamingSttSession,
+    error: string
+  ) {
+    if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
       return;
     }
 
@@ -657,13 +722,21 @@ export class EvenBridgeApp {
     }
 
     this.sttReconnectAttemptedSessionId = listeningSessionId;
-    this.store.log(`STT error: ${error}. Retrying once...`);
+    this.store.log(`STT error: ${error}. Scheduling one retry...`);
     await this.stopSttIfNeeded('stt-retry');
-    if (!this.canApplySttCallback(listeningSessionId)) {
+    if (!this.isListeningSessionActive(listeningSessionId)) {
       return;
     }
 
-    await this.startSttSessionForListening(listeningSessionId, true);
+    this.clearSttRetryTimer();
+    this.sttRetryTimer = window.setTimeout(() => {
+      this.sttRetryTimer = null;
+      if (!this.isListeningSessionActive(listeningSessionId) || this.sttSession) {
+        return;
+      }
+
+      void this.startSttSessionForListening(listeningSessionId, true);
+    }, this.sttRetryDelayMs);
   }
 
   private currentContactName() {
