@@ -52,6 +52,20 @@ export type ImageSyncDebugInfo = {
   lastAt: number | null;
 };
 
+export type ReliabilityDebugInfo = {
+  activeSttSessionToken: number | null;
+  activeSttListeningSessionId: number | null;
+  sttReconnectAttemptedSessionId: number | null;
+  sttRetryScheduledForSessionId: number | null;
+  sttRetryScheduledAt: number | null;
+  sttRetryCancelledAt: number | null;
+  lastIgnoredStaleCallback: string | null;
+  lastIgnoredStaleCallbackAt: number | null;
+  lastCleanupReason: string | null;
+  lastCleanupAt: number | null;
+  pendingPartialFlush: boolean;
+};
+
 export type AppState = {
   screen: AppScreen;
   screenBeforeDebug: Exclude<AppScreen, 'debug'>;
@@ -86,5 +100,6 @@ export type AppState = {
   lastTranscriptAt: number | null;
   sttError: string | null;
   listeningSessionId: number;
+  reliability: ReliabilityDebugInfo;
   logs: string[];
 };

@@ -7,6 +7,7 @@ import type {
   DevicePageLifecycleState,
   NormalizedInput,
   RawEventDebugInfo,
+  ReliabilityDebugInfo,
   SttStatus,
   TranscriptEntry,
   TurnState,
@@ -86,6 +87,22 @@ function createInitialTurnState() {
   };
 }
 
+function createInitialReliabilityState(): ReliabilityDebugInfo {
+  return {
+    activeSttSessionToken: null,
+    activeSttListeningSessionId: null,
+    sttReconnectAttemptedSessionId: null,
+    sttRetryScheduledForSessionId: null,
+    sttRetryScheduledAt: null,
+    sttRetryCancelledAt: null,
+    lastIgnoredStaleCallback: null,
+    lastIgnoredStaleCallbackAt: null,
+    lastCleanupReason: null,
+    lastCleanupAt: null,
+    pendingPartialFlush: false,
+  };
+}
+
 function getLatestTranscriptCursor(transcript: TranscriptEntry[]) {
   return transcript.length > 0 ? transcript.length - 1 : -1;
 }
@@ -112,6 +129,7 @@ export function createInitialState(): AppState {
       lastResult: 'idle',
       lastAt: null,
     },
+    reliability: createInitialReliabilityState(),
     ...createInitialAudioCaptureState(),
     ...createInitialSttState(0),
     logs: [],
@@ -295,6 +313,31 @@ export class AppStore {
 
   setImageSyncDebug(update: Partial<AppState['imageSync']>) {
     this.patch({ imageSync: { ...this.state.imageSync, ...update } });
+  }
+
+  setReliabilityDebug(update: Partial<ReliabilityDebugInfo>) {
+    this.patch({
+      reliability: {
+        ...this.state.reliability,
+        ...update,
+      },
+    });
+  }
+
+  noteIgnoredStaleCallback(reason: string) {
+    const now = Date.now();
+    this.setReliabilityDebug({
+      lastIgnoredStaleCallback: reason,
+      lastIgnoredStaleCallbackAt: now,
+    });
+  }
+
+  noteCleanup(reason: string) {
+    const now = Date.now();
+    this.setReliabilityDebug({
+      lastCleanupReason: reason,
+      lastCleanupAt: now,
+    });
   }
 
   goToIncomingForSelectedContact() {
@@ -488,6 +531,16 @@ export class AppStore {
       patch.audioError = null;
     }
 
+    const nextMicOpen = typeof patch.micOpen === 'boolean' ? patch.micOpen : this.state.micOpen;
+    const nextError = Object.prototype.hasOwnProperty.call(patch, 'audioError') ? patch.audioError ?? null : this.state.audioError;
+    if (
+      this.state.audioCaptureStatus === status &&
+      this.state.micOpen === nextMicOpen &&
+      this.state.audioError === nextError
+    ) {
+      return;
+    }
+
     this.patch(patch);
   }
 
@@ -498,6 +551,16 @@ export class AppStore {
     lastAudioFrameAt: number;
     listeningActivityLevel: number;
   }) {
+    if (
+      this.state.audioFrameCount === update.audioFrameCount &&
+      this.state.audioBufferByteLength === update.audioBufferByteLength &&
+      this.state.bufferedAudioDurationMs === update.bufferedAudioDurationMs &&
+      this.state.lastAudioFrameAt === update.lastAudioFrameAt &&
+      this.state.listeningActivityLevel === update.listeningActivityLevel
+    ) {
+      return;
+    }
+
     this.patch({
       audioFrameCount: update.audioFrameCount,
       audioBufferByteLength: update.audioBufferByteLength,
@@ -518,10 +581,19 @@ export class AppStore {
       patch.sttError = null;
     }
 
+    const nextError = Object.prototype.hasOwnProperty.call(patch, 'sttError') ? patch.sttError ?? null : this.state.sttError;
+    if (this.state.sttStatus === status && this.state.sttError === nextError) {
+      return;
+    }
+
     this.patch(patch);
   }
 
   setSttPartialTranscript(text: string) {
+    if (this.state.sttPartialTranscript === text) {
+      return;
+    }
+
     this.patch({
       sttPartialTranscript: text,
       lastTranscriptAt: Date.now(),

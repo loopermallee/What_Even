@@ -43,6 +43,22 @@ function rawInteractionToNormalized(interaction: RawInteractionType): 'UP' | 'DO
   return 'TAP';
 }
 
+type CleanupReason =
+  | 'continue'
+  | 'end'
+  | 'ignore'
+  | 'back'
+  | 'contact_change'
+  | 'shutdown'
+  | 'close-request'
+  | 'cleanup'
+  | 'state-sync'
+  | 'stt-retry'
+  | 'stale-session'
+  | 'session-rollover'
+  | 'post-open-reconcile'
+  | 'post-start-reconcile';
+
 export class EvenBridgeApp {
   private readonly store: AppStore;
   private readonly glasses: AppGlasses;
@@ -53,9 +69,15 @@ export class EvenBridgeApp {
   private imageQueue: SerializedImageQueue | null = null;
   private startupLifecycle: StartupLifecycleManager | null = null;
   private glassesSyncTimer: number | null = null;
+  private syncInFlight = false;
+  private syncQueuedWhileInFlight = false;
+  private syncNeedsForcedImages = false;
   private lastRenderedPortraitAsset: string | null = null;
+  private lastSyncedTextContent = '';
   private lastSyncSignature = '';
   private unsubscribeStore: (() => void) | null = null;
+  private previousObservedState: { screen: string; selectedContactIndex: number; started: boolean } | null = null;
+  private pendingCleanupReason: CleanupReason | null = null;
   private readonly audioCapture = new AudioCaptureController({ maxBufferDurationMs: 10_000 });
   private sttSession: StreamingSttSession | null = null;
   private activeSttListeningSessionId: number | null = null;
@@ -64,8 +86,21 @@ export class EvenBridgeApp {
   private sttReconnectAttemptedSessionId: number | null = null;
   private sttRetryTimer: number | null = null;
   private lastCommittedFinal: { sessionToken: number; text: string; at: number } | null = null;
+  private pendingPartialFlushTimer: number | null = null;
+  private pendingPartialText: string | null = null;
+  private pendingPartialSessionToken: number | null = null;
+  private pendingPartialListeningSessionId: number | null = null;
+  private pendingPartialSessionRef: StreamingSttSession | null = null;
+  private lastAudioMetricPushAt = 0;
+  private lastAudioDropLogAt = 0;
+  private lastStaleNote: { key: string; at: number } | null = null;
   private readonly sttRetryDelayMs = 350;
   private readonly sttAdjacentFinalDedupeWindowMs = 1200;
+  private readonly syncDebounceMs = 70;
+  private readonly audioMetricThrottleMs = 90;
+  private readonly audioDropLogThrottleMs = 1500;
+  private readonly sttPartialFlushMs = 70;
+  private readonly staleLogCooldownMs = 800;
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -147,7 +182,8 @@ export class EvenBridgeApp {
       this.setupEvenHubEventListener();
       this.setupStoreAudioLifecycle();
       this.store.log('Startup lifecycle complete: rebuild flow ready.');
-      await this.syncNow(true);
+      this.syncNeedsForcedImages = true;
+      this.queueSyncFromState();
     } catch (error) {
       this.store.log(`Start error: ${String(error)}`);
     }
@@ -164,6 +200,18 @@ export class EvenBridgeApp {
     }
 
     this.lastSyncSignature = signature;
+    this.scheduleSync(false);
+  }
+
+  private scheduleSync(forceImages: boolean) {
+    if (forceImages) {
+      this.syncNeedsForcedImages = true;
+    }
+
+    if (this.syncInFlight) {
+      this.syncQueuedWhileInFlight = true;
+      return;
+    }
 
     if (this.glassesSyncTimer !== null) {
       return;
@@ -171,8 +219,27 @@ export class EvenBridgeApp {
 
     this.glassesSyncTimer = window.setTimeout(() => {
       this.glassesSyncTimer = null;
-      void this.syncNow(false);
-    }, 0);
+      void this.flushSyncQueue();
+    }, this.syncDebounceMs);
+  }
+
+  private async flushSyncQueue() {
+    if (this.syncInFlight) {
+      this.syncQueuedWhileInFlight = true;
+      return;
+    }
+
+    this.syncInFlight = true;
+    try {
+      do {
+        this.syncQueuedWhileInFlight = false;
+        const forceImages = this.syncNeedsForcedImages;
+        this.syncNeedsForcedImages = false;
+        await this.syncNow(forceImages);
+      } while (this.syncQueuedWhileInFlight);
+    } finally {
+      this.syncInFlight = false;
+    }
   }
 
   cleanup() {
@@ -190,13 +257,20 @@ export class EvenBridgeApp {
       window.clearTimeout(this.glassesSyncTimer);
       this.glassesSyncTimer = null;
     }
+    this.syncInFlight = false;
+    this.syncQueuedWhileInFlight = false;
+    this.syncNeedsForcedImages = false;
 
     this.normalizer.clear();
     this.imageQueue?.reset();
     this.lastRenderedPortraitAsset = null;
+    this.lastSyncedTextContent = '';
     this.lastSyncSignature = '';
     this.audioCapture.clearBuffer();
-    this.clearSttRetryTimer();
+    this.previousObservedState = null;
+    this.pendingCleanupReason = null;
+    this.clearPendingPartialFlush('cleanup');
+    this.clearSttRetryTimer('cleanup');
 
     if (this.unsubscribeStore) {
       this.unsubscribeStore();
@@ -205,6 +279,7 @@ export class EvenBridgeApp {
 
     void this.stopSttIfNeeded('cleanup');
     void this.closeMicIfNeeded('cleanup');
+    this.store.noteCleanup('cleanup');
   }
 
   private setupEvenHubEventListener() {
@@ -258,7 +333,9 @@ export class EvenBridgeApp {
       this.unsubscribeStore = null;
     }
 
-    this.unsubscribeStore = this.store.subscribe(() => {
+    this.previousObservedState = null;
+    this.unsubscribeStore = this.store.subscribe((nextState) => {
+      this.captureCleanupReasonHint(nextState);
       void this.syncMicForCurrentState();
     });
 
@@ -274,6 +351,7 @@ export class EvenBridgeApp {
     const shouldBeOpen = state.started && state.screen === 'listening';
     if (shouldBeOpen) {
       if (!this.audioCapture.isMicOpen() && state.audioCaptureStatus !== 'opening') {
+        this.pendingCleanupReason = null;
         this.store.setAudioCaptureStatus('opening', { micOpen: false, error: null });
         this.store.log('Mic open requested (entered listening).');
         const opened = await this.audioCapture.requestMicOpen(this.bridge);
@@ -293,8 +371,10 @@ export class EvenBridgeApp {
       return;
     }
 
-    await this.stopSttIfNeeded(`state-sync:${state.screen}`);
-    await this.closeMicIfNeeded(`state-sync:${state.screen}`);
+    const cleanupReason = this.consumeCleanupReasonHint(state);
+    await this.stopSttIfNeeded(cleanupReason);
+    await this.closeMicIfNeeded(cleanupReason);
+    this.store.noteCleanup(cleanupReason);
   }
 
   private async closeMicIfNeeded(reason: string) {
@@ -327,6 +407,7 @@ export class EvenBridgeApp {
       this.store.log(`Close request failed: ${String(error)}`);
     });
     this.store.setStarted(false);
+    this.store.noteCleanup('close-request');
   }
 
   private handleEvenHubEvent(event: EvenHubEvent) {
@@ -376,7 +457,11 @@ export class EvenBridgeApp {
 
     const state = this.store.getState();
     if (state.screen !== 'listening' || !state.started) {
-      this.store.log(`Audio frame dropped (screen=${state.screen}, started=${state.started ? 'yes' : 'no'}).`);
+      const now = Date.now();
+      if (now - this.lastAudioDropLogAt >= this.audioDropLogThrottleMs) {
+        this.lastAudioDropLogAt = now;
+        this.store.log(`Audio frame dropped (screen=${state.screen}, started=${state.started ? 'yes' : 'no'}).`);
+      }
       return;
     }
 
@@ -385,7 +470,15 @@ export class EvenBridgeApp {
       return;
     }
 
-    this.store.updateAudioCaptureMetrics(metrics);
+    const now = Date.now();
+    if (
+      this.lastAudioMetricPushAt === 0 ||
+      now - this.lastAudioMetricPushAt >= this.audioMetricThrottleMs ||
+      metrics.audioFrameCount <= 1
+    ) {
+      this.lastAudioMetricPushAt = now;
+      this.store.updateAudioCaptureMetrics(metrics);
+    }
     if (state.audioCaptureStatus !== 'listening' || !state.micOpen) {
       this.store.setAudioCaptureStatus('listening', { micOpen: true, error: null });
     }
@@ -396,7 +489,12 @@ export class EvenBridgeApp {
       sttSession &&
       sttSessionToken !== null &&
       this.activeSttListeningSessionId !== null &&
-      this.canApplySttCallback(this.activeSttListeningSessionId, sttSessionToken, sttSession)
+      this.canApplySttCallback(
+        this.activeSttListeningSessionId,
+        sttSessionToken,
+        sttSession,
+        'audio-send'
+      )
     ) {
       void sttSession.sendAudio(audioPcm).catch((error) => {
         this.store.log(`STT audio send failed: ${String(error)}`);
@@ -427,15 +525,23 @@ export class EvenBridgeApp {
     }
 
     try {
+      const text = this.glasses.getDialogueText();
+      if (text === this.lastSyncedTextContent) {
+        return;
+      }
+
       const dialogueUpdate = {
         containerID: GLASSES_CONTAINERS.dialogueText.id,
         containerName: GLASSES_CONTAINERS.dialogueText.name,
         contentOffset: 0,
         contentLength: 1000,
-        content: this.glasses.getDialogueText(),
+        content: text,
       };
 
       const ok = await this.bridge.textContainerUpgrade(dialogueUpdate as any);
+      if (ok) {
+        this.lastSyncedTextContent = text;
+      }
       this.store.log(ok ? 'Text synced to Even.' : 'Text sync failed.');
     } catch (error) {
       this.store.log(`Text sync error: ${String(error)}`);
@@ -525,6 +631,11 @@ export class EvenBridgeApp {
       await this.stopSttIfNeeded('session-rollover');
     }
 
+    if (this.sttReconnectAttemptedSessionId !== null && this.sttReconnectAttemptedSessionId !== state.listeningSessionId) {
+      this.sttReconnectAttemptedSessionId = null;
+      this.store.setReliabilityDebug({ sttReconnectAttemptedSessionId: null });
+    }
+
     if (this.sttSession) {
       return;
     }
@@ -533,7 +644,7 @@ export class EvenBridgeApp {
   }
 
   private async startSttSessionForListening(listeningSessionId: number, isRetry: boolean) {
-    this.clearSttRetryTimer();
+    this.clearSttRetryTimer('start-session');
 
     const state = this.store.getState();
     if (!state.started || state.screen !== 'listening' || state.listeningSessionId !== listeningSessionId) {
@@ -558,37 +669,48 @@ export class EvenBridgeApp {
     this.activeSttListeningSessionId = listeningSessionId;
     this.activeSttSessionToken = sttSessionToken;
     this.lastCommittedFinal = null;
+    this.clearPendingPartialFlush('new-session');
     this.store.setSttStatus('connecting', { error: null });
+    this.store.setReliabilityDebug({
+      activeSttSessionToken: sttSessionToken,
+      activeSttListeningSessionId: listeningSessionId,
+      sttReconnectAttemptedSessionId: this.sttReconnectAttemptedSessionId,
+      sttRetryScheduledForSessionId: null,
+      sttRetryScheduledAt: null,
+      pendingPartialFlush: false,
+    });
 
     session.onStateChange((nextState) => {
-      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'state-change')) {
         return;
       }
 
       if (nextState === 'error') {
+        this.clearPendingPartialFlush('stt-state-error');
         this.store.clearSttPartialTranscript();
       }
       this.store.setSttStatus(nextState, nextState === 'error' ? { error: 'STT stream entered error state.' } : { error: null });
     });
 
     session.onPartial((text) => {
-      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'partial')) {
         return;
       }
 
-      this.store.setSttPartialTranscript(text);
+      this.queuePartialTranscriptFlush(text, listeningSessionId, sttSessionToken, session);
     });
 
     session.onFinal((text) => {
-      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'final')) {
         return;
       }
 
+      this.clearPendingPartialFlush('stt-final');
       this.commitSttFinal(sttSessionToken, text);
     });
 
     session.onError((error) => {
-      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'error')) {
         return;
       }
 
@@ -597,7 +719,7 @@ export class EvenBridgeApp {
 
     try {
       await session.start();
-      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
+      if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'post-start-reconcile')) {
         await this.stopSttIfNeeded('post-start-reconcile');
       }
     } catch (error) {
@@ -605,6 +727,11 @@ export class EvenBridgeApp {
         this.sttSession = null;
         this.activeSttListeningSessionId = null;
         this.activeSttSessionToken = null;
+        this.store.setReliabilityDebug({
+          activeSttSessionToken: null,
+          activeSttListeningSessionId: null,
+          pendingPartialFlush: false,
+        });
       }
       this.store.log(`STT start failed: ${String(error)}`);
       if (!this.isListeningSessionActive(listeningSessionId)) {
@@ -621,15 +748,26 @@ export class EvenBridgeApp {
   }
 
   private async stopSttIfNeeded(reason: string) {
-    this.clearSttRetryTimer();
+    this.clearSttRetryTimer(reason);
+    this.clearPendingPartialFlush(reason);
+    if (!reason.includes('stt-retry')) {
+      this.sttReconnectAttemptedSessionId = null;
+      this.store.setReliabilityDebug({ sttReconnectAttemptedSessionId: null });
+    }
 
     if (!this.sttSession) {
       if (this.store.getState().sttStatus !== 'idle' || this.store.getState().sttPartialTranscript) {
         this.store.clearSttPartialTranscript();
         this.store.setSttStatus('idle', { error: null });
       }
+      this.activeSttListeningSessionId = null;
       this.activeSttSessionToken = null;
       this.lastCommittedFinal = null;
+      this.store.setReliabilityDebug({
+        activeSttSessionToken: null,
+        activeSttListeningSessionId: null,
+        pendingPartialFlush: false,
+      });
       return;
     }
 
@@ -641,6 +779,11 @@ export class EvenBridgeApp {
     this.activeSttListeningSessionId = null;
     this.activeSttSessionToken = null;
     this.lastCommittedFinal = null;
+    this.store.setReliabilityDebug({
+      activeSttSessionToken: null,
+      activeSttListeningSessionId: null,
+      pendingPartialFlush: false,
+    });
 
     try {
       await session.stop();
@@ -652,13 +795,20 @@ export class EvenBridgeApp {
     }
   }
 
-  private clearSttRetryTimer() {
+  private clearSttRetryTimer(reason = 'cancelled') {
     if (this.sttRetryTimer === null) {
       return;
     }
 
     window.clearTimeout(this.sttRetryTimer);
     this.sttRetryTimer = null;
+    const now = Date.now();
+    this.store.log(`STT retry cancelled (${reason}).`);
+    this.store.setReliabilityDebug({
+      sttRetryScheduledForSessionId: null,
+      sttRetryScheduledAt: null,
+      sttRetryCancelledAt: now,
+    });
   }
 
   private isListeningSessionActive(listeningSessionId: number) {
@@ -670,13 +820,33 @@ export class EvenBridgeApp {
     );
   }
 
-  private canApplySttCallback(listeningSessionId: number, sttSessionToken: number, session: StreamingSttSession) {
-    return (
-      this.isListeningSessionActive(listeningSessionId) &&
-      this.activeSttListeningSessionId === listeningSessionId &&
-      this.activeSttSessionToken === sttSessionToken &&
-      this.sttSession === session
-    );
+  private canApplySttCallback(
+    listeningSessionId: number,
+    sttSessionToken: number,
+    session: StreamingSttSession,
+    callbackKind: string
+  ) {
+    if (!this.isListeningSessionActive(listeningSessionId)) {
+      this.noteStaleCallback(`stt:${callbackKind}`, `listening_session_inactive:${listeningSessionId}`);
+      return false;
+    }
+
+    if (this.activeSttListeningSessionId !== listeningSessionId) {
+      this.noteStaleCallback(`stt:${callbackKind}`, `active_session_mismatch:${listeningSessionId}`);
+      return false;
+    }
+
+    if (this.activeSttSessionToken !== sttSessionToken) {
+      this.noteStaleCallback(`stt:${callbackKind}`, `session_token_mismatch:${sttSessionToken}`);
+      return false;
+    }
+
+    if (this.sttSession !== session) {
+      this.noteStaleCallback(`stt:${callbackKind}`, 'session_instance_mismatch');
+      return false;
+    }
+
+    return true;
   }
 
   private commitSttFinal(sttSessionToken: number, text: string) {
@@ -717,10 +887,11 @@ export class EvenBridgeApp {
     session: StreamingSttSession,
     error: string
   ) {
-    if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session)) {
+    if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'error-handler')) {
       return;
     }
 
+    this.clearPendingPartialFlush('stt-error');
     this.store.clearSttPartialTranscript();
 
     if (this.sttReconnectAttemptedSessionId === listeningSessionId) {
@@ -729,21 +900,161 @@ export class EvenBridgeApp {
     }
 
     this.sttReconnectAttemptedSessionId = listeningSessionId;
+    this.store.setReliabilityDebug({ sttReconnectAttemptedSessionId: listeningSessionId });
     this.store.log(`STT error: ${error}. Scheduling one retry...`);
     await this.stopSttIfNeeded('stt-retry');
     if (!this.isListeningSessionActive(listeningSessionId)) {
       return;
     }
 
-    this.clearSttRetryTimer();
+    this.clearSttRetryTimer('reschedule');
+    const scheduledAt = Date.now();
+    this.store.setReliabilityDebug({
+      sttRetryScheduledForSessionId: listeningSessionId,
+      sttRetryScheduledAt: scheduledAt,
+      sttRetryCancelledAt: null,
+    });
+    this.store.log(`STT retry scheduled in ${this.sttRetryDelayMs}ms (session ${listeningSessionId}).`);
     this.sttRetryTimer = window.setTimeout(() => {
       this.sttRetryTimer = null;
+      this.store.setReliabilityDebug({
+        sttRetryScheduledForSessionId: null,
+        sttRetryScheduledAt: null,
+      });
       if (!this.isListeningSessionActive(listeningSessionId) || this.sttSession) {
+        this.noteStaleCallback('stt:retry-fire', `retry_target_invalid:${listeningSessionId}`);
         return;
       }
 
       void this.startSttSessionForListening(listeningSessionId, true);
     }, this.sttRetryDelayMs);
+  }
+
+  private queuePartialTranscriptFlush(
+    text: string,
+    listeningSessionId: number,
+    sttSessionToken: number,
+    session: StreamingSttSession
+  ) {
+    this.pendingPartialText = text;
+    this.pendingPartialListeningSessionId = listeningSessionId;
+    this.pendingPartialSessionToken = sttSessionToken;
+    this.pendingPartialSessionRef = session;
+    this.store.setReliabilityDebug({ pendingPartialFlush: true });
+
+    if (this.pendingPartialFlushTimer !== null) {
+      return;
+    }
+
+    this.pendingPartialFlushTimer = window.setTimeout(() => {
+      this.pendingPartialFlushTimer = null;
+      const nextText = this.pendingPartialText;
+      const nextSessionId = this.pendingPartialListeningSessionId;
+      const nextToken = this.pendingPartialSessionToken;
+      const nextSession = this.pendingPartialSessionRef;
+      this.pendingPartialText = null;
+      this.pendingPartialListeningSessionId = null;
+      this.pendingPartialSessionToken = null;
+      this.pendingPartialSessionRef = null;
+      this.store.setReliabilityDebug({ pendingPartialFlush: false });
+
+      if (
+        !nextText ||
+        nextSessionId === null ||
+        nextToken === null ||
+        !nextSession ||
+        !this.canApplySttCallback(nextSessionId, nextToken, nextSession, 'partial-flush')
+      ) {
+        return;
+      }
+
+      this.store.setSttPartialTranscript(nextText);
+    }, this.sttPartialFlushMs);
+  }
+
+  private clearPendingPartialFlush(_reason: string) {
+    if (this.pendingPartialFlushTimer !== null) {
+      window.clearTimeout(this.pendingPartialFlushTimer);
+      this.pendingPartialFlushTimer = null;
+    }
+
+    const hadPending =
+      this.pendingPartialText !== null ||
+      this.pendingPartialListeningSessionId !== null ||
+      this.pendingPartialSessionToken !== null ||
+      this.pendingPartialSessionRef !== null;
+    this.pendingPartialText = null;
+    this.pendingPartialListeningSessionId = null;
+    this.pendingPartialSessionToken = null;
+    this.pendingPartialSessionRef = null;
+
+    if (hadPending) {
+      this.store.setReliabilityDebug({ pendingPartialFlush: false });
+      return;
+    }
+
+    this.store.setReliabilityDebug({ pendingPartialFlush: false });
+  }
+
+  private captureCleanupReasonHint(nextState: ReturnType<AppStore['getState']>) {
+    const previous = this.previousObservedState;
+    this.previousObservedState = {
+      screen: nextState.screen,
+      selectedContactIndex: nextState.selectedContactIndex,
+      started: nextState.started,
+    };
+
+    if (!previous) {
+      return;
+    }
+
+    if (previous.started && !nextState.started) {
+      this.pendingCleanupReason = 'shutdown';
+      return;
+    }
+
+    if (previous.selectedContactIndex !== nextState.selectedContactIndex) {
+      this.pendingCleanupReason = 'contact_change';
+      return;
+    }
+
+    if (previous.screen === 'listening' && nextState.screen === 'active') {
+      this.pendingCleanupReason = 'continue';
+      return;
+    }
+
+    if (previous.screen === 'listening' && nextState.screen === 'ended') {
+      this.pendingCleanupReason = 'end';
+      return;
+    }
+
+    if (previous.screen === 'incoming' && nextState.screen === 'ended') {
+      this.pendingCleanupReason = 'ignore';
+      return;
+    }
+
+    if (previous.screen === 'ended' && nextState.screen === 'contacts') {
+      this.pendingCleanupReason = 'back';
+    }
+  }
+
+  private consumeCleanupReasonHint(state: ReturnType<AppStore['getState']>) {
+    const reason = this.pendingCleanupReason ?? 'state-sync';
+    this.pendingCleanupReason = null;
+    return `${reason}:${state.screen}`;
+  }
+
+  private noteStaleCallback(kind: string, reason: string) {
+    const now = Date.now();
+    const key = `${kind}:${reason}`;
+    if (this.lastStaleNote && this.lastStaleNote.key === key && now - this.lastStaleNote.at < this.staleLogCooldownMs) {
+      return;
+    }
+
+    this.lastStaleNote = { key, at: now };
+    const descriptor = `${kind}/${reason}`;
+    this.store.noteIgnoredStaleCallback(descriptor);
+    this.store.log(`Ignored stale callback (${descriptor}).`);
   }
 
   private currentContactName() {

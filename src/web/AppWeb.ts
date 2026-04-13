@@ -179,9 +179,26 @@ export class AppWeb {
               <div>Mic Open: <strong>${state.micOpen ? 'yes' : 'no'}</strong></div>
               <div>Capture: <strong>${state.audioCaptureStatus}</strong></div>
               <div>STT: <strong>${state.sttStatus}</strong></div>
+              <div>Listening Session: <strong>${state.listeningSessionId}</strong></div>
+              <div>Active STT Session ID: <strong>${state.reliability.activeSttListeningSessionId ?? 'none'}</strong></div>
+              <div>Active STT Token: <strong>${state.reliability.activeSttSessionToken ?? 'none'}</strong></div>
               <div>STT Partial: <strong>${state.sttPartialTranscript || 'none'}</strong></div>
               <div>STT Error: <strong>${state.sttError ?? 'none'}</strong></div>
               <div>Last Transcript At: <strong>${state.lastTranscriptAt === null ? 'none' : new Date(state.lastTranscriptAt).toLocaleTimeString()}</strong></div>
+            </div>
+          </div>
+          <div class="debug-section">
+            <div class="debug-heading">Reliability</div>
+            <div class="debug-grid">
+              <div>Retry Attempted Session: <strong>${state.reliability.sttReconnectAttemptedSessionId ?? 'none'}</strong></div>
+              <div>Retry Scheduled Session: <strong>${state.reliability.sttRetryScheduledForSessionId ?? 'none'}</strong></div>
+              <div>Retry Scheduled At: <strong>${state.reliability.sttRetryScheduledAt === null ? 'none' : new Date(state.reliability.sttRetryScheduledAt).toLocaleTimeString()}</strong></div>
+              <div>Retry Cancelled At: <strong>${state.reliability.sttRetryCancelledAt === null ? 'none' : new Date(state.reliability.sttRetryCancelledAt).toLocaleTimeString()}</strong></div>
+              <div>Pending Partial Flush: <strong>${state.reliability.pendingPartialFlush ? 'yes' : 'no'}</strong></div>
+              <div>Last Ignored Stale Callback: <strong>${state.reliability.lastIgnoredStaleCallback ?? 'none'}</strong></div>
+              <div>Ignored Callback At: <strong>${state.reliability.lastIgnoredStaleCallbackAt === null ? 'none' : new Date(state.reliability.lastIgnoredStaleCallbackAt).toLocaleTimeString()}</strong></div>
+              <div>Last Cleanup Reason: <strong>${state.reliability.lastCleanupReason ?? 'none'}</strong></div>
+              <div>Cleanup At: <strong>${state.reliability.lastCleanupAt === null ? 'none' : new Date(state.reliability.lastCleanupAt).toLocaleTimeString()}</strong></div>
             </div>
           </div>
           <div class="debug-section">
