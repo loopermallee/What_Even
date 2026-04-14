@@ -2,6 +2,19 @@
 
 G2-first codec app with companion web UI.
 
+## Phase 5B Lifecycle Race + Release Readiness
+
+Phase 5B adds a lightweight DEV-only lifecycle race harness and release validation docs.
+
+- In DEV mode, use the `Lifecycle Race Harness` panel in the web UI:
+  - Run single scenarios or `Run All (Isolated)`.
+  - Every scenario starts from baseline and reports `cleanupRecovered: true|false`.
+  - `blocked` is reserved for baseline reset failures or timeout cleanup invariant failures.
+- Release docs:
+  - `docs/release-readiness-checklist.md`
+  - `docs/smoke-test-matrix.md`
+  - `docs/operational-runbook.md`
+
 ## Phase 5A STT Security Baseline
 
 Streaming STT now uses a backend Deepgram token broker. The browser no longer relies on a long-lived Deepgram key for normal operation.

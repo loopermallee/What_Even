@@ -2,6 +2,11 @@ import { CONTACTS } from '../app/contacts';
 import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from '../app/presentation';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
+import {
+  LifecycleRaceHarness,
+  type LifecycleRaceScenarioId,
+  type LifecycleRaceScenarioResult,
+} from './dev/lifecycleRaceHarness';
 import { renderCodecShell } from './components/CodecShell';
 import { renderControlsPanel } from './components/ControlsPanel';
 import { renderDebugLog } from './components/DebugLog';
@@ -97,6 +102,7 @@ export class AppWeb {
   private speakingTimer: number | null = null;
   private mouthOpen = false;
   private barLevel = 0;
+  private readonly lifecycleRaceHarness: LifecycleRaceHarness;
 
   constructor(options: {
     store: AppStore;
@@ -104,6 +110,12 @@ export class AppWeb {
   }) {
     this.store = options.store;
     this.startOnEven = options.startOnEven;
+    this.lifecycleRaceHarness = new LifecycleRaceHarness({
+      store: this.store,
+      onUpdate: () => {
+        this.render(this.store.getState());
+      },
+    });
   }
 
   mount() {
@@ -146,6 +158,8 @@ export class AppWeb {
         <p class="subtitle">G2-first codec app with companion web UI</p>
 
         ${renderControlsPanel(state, import.meta.env.DEV)}
+
+        ${this.renderLifecycleHarnessPanel()}
 
         <div id="codecMount">
           ${renderCodecShell(state, {
@@ -232,6 +246,74 @@ export class AppWeb {
     `;
 
     this.bindControls(state);
+    this.bindLifecycleHarnessControls();
+  }
+
+  private renderLifecycleHarnessPanel() {
+    if (!import.meta.env.DEV) {
+      return '';
+    }
+
+    const running = this.lifecycleRaceHarness.isRunning();
+    const scenarios = this.lifecycleRaceHarness.getScenarioDefinitions();
+    const results = this.lifecycleRaceHarness.getResults();
+
+    const buttons = scenarios
+      .map((scenario) => `
+        <button class="harness-scenario-btn" data-harness-run="${scenario.id}" ${running ? 'disabled' : ''}>
+          ${scenario.name}
+        </button>
+      `)
+      .join('');
+
+    const rows = results.length === 0
+      ? '<div class="harness-empty">No scenario results yet.</div>'
+      : results
+        .map((result) => this.renderScenarioResult(result))
+        .join('');
+
+    return `
+      <div class="harness-card">
+        <div class="harness-header">
+          <div>
+            <div class="harness-title">Lifecycle Race Harness (DEV)</div>
+            <div class="harness-subtitle">Each scenario starts from baseline, has timeout bounds, and runs cleanup before the next scenario.</div>
+          </div>
+          <div class="harness-controls">
+            <button id="harnessRunAllBtn" ${running ? 'disabled' : ''}>Run All (Isolated)</button>
+            <button id="harnessClearBtn" ${running ? 'disabled' : ''}>Clear Results</button>
+          </div>
+        </div>
+        <div class="harness-actions">${buttons}</div>
+        <div class="harness-results">${rows}</div>
+      </div>
+    `;
+  }
+
+  private renderScenarioResult(result: LifecycleRaceScenarioResult) {
+    const notes = result.notes.length > 0
+      ? result.notes.map((note) => `<div>${note}</div>`).join('')
+      : '<div>none</div>';
+    return `
+      <div class="harness-result-row">
+        <div class="harness-result-top">
+          <strong>${result.name}</strong>
+          <span class="harness-status harness-status-${result.status}">${result.status.toUpperCase()}</span>
+        </div>
+        <div class="harness-result-grid">
+          <div>cleanupRecovered: <strong>${result.cleanupRecovered ? 'true' : 'false'}</strong></div>
+          <div>duration: <strong>${result.durationMs}ms</strong> (timeout ${result.timeoutMs}ms)</div>
+          <div>finalScreen: <strong>${result.finalScreen}</strong></div>
+          <div>transcriptDelta: <strong>${result.transcriptDelta}</strong></div>
+          <div>pendingResponseLeaked: <strong>${result.pendingResponseLeaked ? 'yes' : 'no'}</strong></div>
+          <div>retryScheduled: <strong>${result.diagnostics.retryScheduledForSessionId ?? 'none'}</strong></div>
+          <div>mic/audio/stt: <strong>${result.diagnostics.micOpen ? 'open' : 'closed'} / ${result.diagnostics.audioCaptureStatus} / ${result.diagnostics.sttStatus}</strong></div>
+          <div>ignoredStale: <strong>${result.diagnostics.lastIgnoredStaleCallback ?? 'none'}</strong></div>
+          <div>cleanupReason: <strong>${result.diagnostics.lastCleanupReason ?? 'none'}</strong></div>
+        </div>
+        <div class="harness-notes">${notes}</div>
+      </div>
+    `;
   }
 
   private bindControls(state: AppState) {
@@ -310,6 +392,38 @@ export class AppWeb {
     if (state.logs.length === 0) {
       this.store.log('Web controls bound.');
     }
+  }
+
+  private bindLifecycleHarnessControls() {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const runAllButton = document.querySelector<HTMLButtonElement>('#harnessRunAllBtn');
+    if (runAllButton) {
+      runAllButton.onclick = () => {
+        void this.lifecycleRaceHarness.runAll();
+      };
+    }
+
+    const clearButton = document.querySelector<HTMLButtonElement>('#harnessClearBtn');
+    if (clearButton) {
+      clearButton.onclick = () => {
+        this.lifecycleRaceHarness.clearResults();
+      };
+    }
+
+    const scenarioButtons = document.querySelectorAll<HTMLButtonElement>('[data-harness-run]');
+    scenarioButtons.forEach((button) => {
+      button.onclick = () => {
+        const id = button.dataset.harnessRun as LifecycleRaceScenarioId | undefined;
+        if (!id) {
+          return;
+        }
+
+        void this.lifecycleRaceHarness.runScenario(id);
+      };
+    });
   }
 
   private async copyLog() {
