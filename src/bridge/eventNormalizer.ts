@@ -1,5 +1,6 @@
 import { OsEventTypeList, type EvenHubEvent } from '@evenrealities/even_hub_sdk';
 import type { EventBranchSource, NormalizedInput, RawEventDebugInfo } from '../app/types';
+import { GLASSES_CONTAINERS } from '../glass/shared';
 
 type InputInspection = RawEventDebugInfo;
 
@@ -127,6 +128,12 @@ function inspectInputEvent(source: EventBranchSource, payload: Record<string, un
 
   const eventTypeCandidates = collectEventTypeCandidates(payload, event);
   const normalizedTypeToken = eventTypeCandidates[0] ?? normalizeTypeToken(rawEventType);
+  const rawListEventFieldKeys = source === 'listEvent'
+    ? Object.keys(payload).sort((left, right) => left.localeCompare(right))
+    : [];
+  const rawListEventFieldSummary = source === 'listEvent'
+    ? summarizeListEventPayload(payload)
+    : null;
 
   return {
     source,
@@ -137,7 +144,38 @@ function inspectInputEvent(source: EventBranchSource, payload: Record<string, un
     containerName,
     currentSelectItemName,
     currentSelectItemIndex,
+    rawListEventFieldKeys,
+    rawListEventFieldSummary,
   };
+}
+
+function summarizeListEventPayload(payload: Record<string, unknown>) {
+  const entries = Object.entries(payload)
+    .filter(([, value]) => value !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${formatFieldValue(value)}`);
+
+  return entries.length > 0 ? entries.join(', ') : 'none';
+}
+
+function formatFieldValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[len:${value.length}]`;
+  }
+
+  if (value && typeof value === 'object') {
+    return '{...}';
+  }
+
+  return String(value);
 }
 
 function isBoundaryToken(token: string) {
@@ -264,6 +302,30 @@ function buildListContainerKey(inspection: InputInspection) {
   return `${inspection.source}|${idPart}|name:${namePart}`;
 }
 
+function isSimulatorStatusListTapFallback(inspection: InputInspection) {
+  if (inspection.source !== 'listEvent') {
+    return false;
+  }
+
+  const matchesStatusListContainer =
+    inspection.containerID === GLASSES_CONTAINERS.statusList.id &&
+    inspection.containerName === GLASSES_CONTAINERS.statusList.name;
+
+  if (!matchesStatusListContainer) {
+    return false;
+  }
+
+  if (inspection.currentSelectItemIndex !== null || inspection.currentSelectItemName !== null) {
+    return false;
+  }
+
+  const tokens = inspection.eventTypeCandidates.length > 0
+    ? inspection.eventTypeCandidates
+    : [inspection.normalizedTypeToken];
+
+  return tokens.every((token) => token === 'UNKNOWN_EVENT');
+}
+
 export class EvenInputNormalizer {
   private readonly lastListIndexByContainer = new Map<string, number>();
 
@@ -294,6 +356,10 @@ export class EvenInputNormalizer {
 
       if (inspection.currentSelectItemIndex !== null) {
         logParts.push(`index: ${inspection.currentSelectItemIndex}`);
+      }
+
+      if (inspection.source === 'listEvent') {
+        logParts.push(`listFields: ${inspection.rawListEventFieldSummary ?? 'none'}`);
       }
 
       const logLine = input
@@ -332,6 +398,10 @@ export class EvenInputNormalizer {
 
       if ((inspection.currentSelectItemName !== null || inspection.currentSelectItemIndex !== null) &&
         tokens.some((token) => isListTapToken(token))) {
+        return 'TAP';
+      }
+
+      if (isSimulatorStatusListTapFallback(inspection)) {
         return 'TAP';
       }
     }

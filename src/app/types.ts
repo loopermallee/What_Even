@@ -37,6 +37,8 @@ export type RawEventDebugInfo = {
   containerName: string | null;
   currentSelectItemName: string | null;
   currentSelectItemIndex: number | null;
+  rawListEventFieldKeys: string[];
+  rawListEventFieldSummary: string | null;
 };
 
 export type TranscriptEntry = {
