@@ -80,6 +80,7 @@ export class EvenBridgeApp {
   private lastSyncSignature = '';
   private unsubscribeStore: (() => void) | null = null;
   private previousObservedState: { screen: string; selectedContactIndex: number; started: boolean } | null = null;
+  private lastAudioLifecycleSignature = '';
   private pendingCleanupReason: CleanupReason | null = null;
   private readonly audioCapture = new AudioCaptureController({ maxBufferDurationMs: 10_000 });
   private sttSession: StreamingSttSession | null = null;
@@ -376,6 +377,7 @@ export class EvenBridgeApp {
     this.lastRenderedPortraitAsset = null;
     this.lastSyncedTextContent = '';
     this.lastSyncSignature = '';
+    this.lastAudioLifecycleSignature = '';
     this.audioCapture.clearBuffer();
     this.previousObservedState = null;
     this.pendingCleanupReason = null;
@@ -451,8 +453,15 @@ export class EvenBridgeApp {
     }
 
     this.previousObservedState = null;
+    this.lastAudioLifecycleSignature = this.getAudioLifecycleSignature(this.store.getState());
     this.unsubscribeStore = this.store.subscribe((nextState) => {
       this.captureCleanupReasonHint(nextState);
+      const nextSignature = this.getAudioLifecycleSignature(nextState);
+      if (nextSignature === this.lastAudioLifecycleSignature) {
+        return;
+      }
+
+      this.lastAudioLifecycleSignature = nextSignature;
       void this.syncMicForCurrentState();
     });
 
@@ -1284,5 +1293,17 @@ export class EvenBridgeApp {
   private currentContactName() {
     const state = this.store.getState();
     return CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown';
+  }
+
+  private getAudioLifecycleSignature(state: ReturnType<AppStore['getState']>) {
+    return JSON.stringify({
+      started: state.started,
+      screen: state.screen,
+      selectedContactIndex: state.selectedContactIndex,
+      listeningSessionId: state.listeningSessionId,
+      micOpen: state.micOpen,
+      audioCaptureStatus: state.audioCaptureStatus,
+      sttStatus: state.sttStatus,
+    });
   }
 }
