@@ -45,6 +45,15 @@ export type TurnState = 'idle' | 'awaiting_user' | 'processing_user' | 'respondi
 
 export type AudioCaptureStatus = 'idle' | 'opening' | 'listening' | 'closing' | 'error';
 export type SttStatus = 'idle' | 'connecting' | 'streaming' | 'closing' | 'error';
+export type ErrorCategory =
+  | 'config_error'
+  | 'auth_error'
+  | 'network_error'
+  | 'stt_error'
+  | 'mic_error'
+  | 'session_error'
+  | 'state_error'
+  | 'unknown_error';
 
 export type ImageSyncDebugInfo = {
   lastPortraitAsset: string | null;
@@ -64,6 +73,8 @@ export type ReliabilityDebugInfo = {
   lastCleanupReason: string | null;
   lastCleanupAt: number | null;
   pendingPartialFlush: boolean;
+  lastErrorCategory: ErrorCategory | null;
+  lastErrorCode: string | null;
 };
 
 export type AppState = {

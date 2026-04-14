@@ -54,7 +54,7 @@ function normalizeDeepgramTranscriptPayload(payload: unknown): { text: string; i
 }
 
 export class DeepgramStreamingSttSession implements StreamingSttSession {
-  private readonly apiKey: string;
+  private readonly accessToken: string;
   private readonly wsUrl: string;
   private ws: WebSocket | null = null;
   private callbacks: CallbackBundle = {
@@ -64,8 +64,8 @@ export class DeepgramStreamingSttSession implements StreamingSttSession {
     onStateChange: () => undefined,
   };
 
-  constructor(options: { apiKey: string; wsUrl?: string }) {
-    this.apiKey = options.apiKey;
+  constructor(options: { accessToken: string; wsUrl?: string }) {
+    this.accessToken = options.accessToken;
     this.wsUrl = options.wsUrl ?? 'wss://api.deepgram.com/v1/listen';
   }
 
@@ -100,7 +100,7 @@ export class DeepgramStreamingSttSession implements StreamingSttSession {
     url.searchParams.set('punctuate', 'true');
     url.searchParams.set('endpointing', '300');
 
-    this.ws = new WebSocket(url.toString(), ['token', this.apiKey]);
+    this.ws = new WebSocket(url.toString(), ['token', this.accessToken]);
     this.ws.binaryType = 'arraybuffer';
 
     await new Promise<void>((resolve, reject) => {

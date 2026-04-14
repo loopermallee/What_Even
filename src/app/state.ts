@@ -100,6 +100,8 @@ function createInitialReliabilityState(): ReliabilityDebugInfo {
     lastCleanupReason: null,
     lastCleanupAt: null,
     pendingPartialFlush: false,
+    lastErrorCategory: null,
+    lastErrorCode: null,
   };
 }
 

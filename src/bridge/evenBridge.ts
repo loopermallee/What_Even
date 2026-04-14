@@ -10,6 +10,9 @@ import { SerializedImageQueue } from './imageQueue';
 import { StartupLifecycleManager } from './startupLifecycle';
 import { AudioCaptureController } from './audio';
 import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
+import { createAppError, isAppError, redactSensitiveText, toErrorMessage, type AppError } from '../app/errors';
+import type { ErrorCategory } from '../app/types';
+import { requestSttBrokerAuth } from './sttAuth';
 
 function normalizedInputToRawInteraction(input: 'UP' | 'DOWN' | 'TAP' | 'DOUBLE_TAP') {
   if (input === 'UP') {
@@ -655,15 +658,37 @@ export class EvenBridgeApp {
       return;
     }
 
-    const apiKey = String(import.meta.env.VITE_DEEPGRAM_API_KEY ?? '').trim();
-    if (!apiKey) {
-      this.store.setSttStatus('error', { error: 'Missing VITE_DEEPGRAM_API_KEY (dev-only path).' });
-      this.store.log('STT start failed: VITE_DEEPGRAM_API_KEY is missing. Production should use a backend token broker.');
+    this.logSttEvent('stt_auth_requested', { listeningSessionId, retry: isRetry });
+
+    let accessToken = '';
+    try {
+      const auth = await requestSttBrokerAuth();
+      accessToken = auth.accessToken;
+      this.logSttEvent('stt_auth_succeeded', { listeningSessionId, retry: isRetry });
+    } catch (error) {
+      const appError = this.toAppError(error, {
+        category: 'auth_error',
+        code: 'stt_auth_unavailable',
+        userMessage: 'Unable to start speech session because auth is unavailable.',
+      });
+      this.recordSttError(appError);
+      this.logSttEvent('stt_auth_failed', {
+        listeningSessionId,
+        retry: isRetry,
+        category: appError.category,
+        code: appError.code,
+      });
+
+      if (!isRetry && this.sttReconnectAttemptedSessionId !== listeningSessionId) {
+        await this.scheduleSttRetryAfterFailure(listeningSessionId, appError);
+        return;
+      }
+
+      this.store.setSttStatus('error', { error: appError.userMessage });
       return;
     }
 
-    const wsUrl = String(import.meta.env.VITE_DEEPGRAM_WS_URL ?? '').trim() || undefined;
-    const session = new DeepgramStreamingSttSession({ apiKey, wsUrl });
+    const session = new DeepgramStreamingSttSession({ accessToken });
     const sttSessionToken = this.nextSttSessionToken++;
     this.sttSession = session;
     this.activeSttListeningSessionId = listeningSessionId;
@@ -733,17 +758,28 @@ export class EvenBridgeApp {
           pendingPartialFlush: false,
         });
       }
-      this.store.log(`STT start failed: ${String(error)}`);
+      const appError = this.toAppError(error, {
+        category: 'stt_error',
+        code: 'stt_start_failed',
+        userMessage: 'Unable to start speech stream.',
+      });
+      this.recordSttError(appError);
+      this.logSttEvent('stt_start_failed', {
+        listeningSessionId,
+        retry: isRetry,
+        category: appError.category,
+        code: appError.code,
+      });
       if (!this.isListeningSessionActive(listeningSessionId)) {
         return;
       }
 
       if (!isRetry && this.sttReconnectAttemptedSessionId !== listeningSessionId) {
-        await this.handleSttErrorForSession(listeningSessionId, sttSessionToken, session, String(error));
+        await this.handleSttErrorForSession(listeningSessionId, sttSessionToken, session, appError.userMessage);
         return;
       }
 
-      this.store.setSttStatus('error', { error: `STT start failed: ${String(error)}` });
+      this.store.setSttStatus('error', { error: appError.userMessage });
     }
   }
 
@@ -894,14 +930,21 @@ export class EvenBridgeApp {
     this.clearPendingPartialFlush('stt-error');
     this.store.clearSttPartialTranscript();
 
+    const appError = this.toAppError(error, {
+      category: 'stt_error',
+      code: 'stt_stream_error',
+      userMessage: 'Speech stream encountered an error.',
+    });
+    this.recordSttError(appError);
+
     if (this.sttReconnectAttemptedSessionId === listeningSessionId) {
-      this.store.setSttStatus('error', { error: `STT error: ${error}` });
+      this.store.setSttStatus('error', { error: appError.userMessage });
       return;
     }
 
     this.sttReconnectAttemptedSessionId = listeningSessionId;
     this.store.setReliabilityDebug({ sttReconnectAttemptedSessionId: listeningSessionId });
-    this.store.log(`STT error: ${error}. Scheduling one retry...`);
+    this.logSttEvent('stt_error_retrying', { category: appError.category, code: appError.code, listeningSessionId });
     await this.stopSttIfNeeded('stt-retry');
     if (!this.isListeningSessionActive(listeningSessionId)) {
       return;
@@ -914,7 +957,7 @@ export class EvenBridgeApp {
       sttRetryScheduledAt: scheduledAt,
       sttRetryCancelledAt: null,
     });
-    this.store.log(`STT retry scheduled in ${this.sttRetryDelayMs}ms (session ${listeningSessionId}).`);
+    this.logSttEvent('stt_retry_scheduled', { listeningSessionId, delayMs: this.sttRetryDelayMs });
     this.sttRetryTimer = window.setTimeout(() => {
       this.sttRetryTimer = null;
       this.store.setReliabilityDebug({
@@ -1054,7 +1097,74 @@ export class EvenBridgeApp {
     this.lastStaleNote = { key, at: now };
     const descriptor = `${kind}/${reason}`;
     this.store.noteIgnoredStaleCallback(descriptor);
-    this.store.log(`Ignored stale callback (${descriptor}).`);
+    this.logSttEvent('stale_callback_ignored', { descriptor });
+  }
+
+  private toAppError(
+    error: unknown,
+    fallback: { category: ErrorCategory; code: string; userMessage: string }
+  ): AppError {
+    if (isAppError(error)) {
+      return error;
+    }
+
+    return createAppError({
+      category: fallback.category,
+      code: fallback.code,
+      userMessage: fallback.userMessage,
+      detail: redactSensitiveText(toErrorMessage(error)),
+    });
+  }
+
+  private recordSttError(error: AppError) {
+    this.store.setReliabilityDebug({
+      lastErrorCategory: error.category,
+      lastErrorCode: error.code,
+    });
+  }
+
+  private logSttEvent(event: string, details?: Record<string, unknown>) {
+    const detailPairs = details
+      ? Object.entries(details)
+          .map(([key, value]) => `${key}=${redactSensitiveText(String(value))}`)
+          .join(', ')
+      : '';
+    this.store.log(detailPairs ? `STT ${event} (${detailPairs})` : `STT ${event}.`);
+  }
+
+  private async scheduleSttRetryAfterFailure(listeningSessionId: number, error: AppError) {
+    this.sttReconnectAttemptedSessionId = listeningSessionId;
+    this.store.setReliabilityDebug({
+      sttReconnectAttemptedSessionId: listeningSessionId,
+      lastErrorCategory: error.category,
+      lastErrorCode: error.code,
+    });
+    await this.stopSttIfNeeded('stt-retry');
+    if (!this.isListeningSessionActive(listeningSessionId)) {
+      return;
+    }
+
+    this.clearSttRetryTimer('reschedule');
+    const scheduledAt = Date.now();
+    this.store.setReliabilityDebug({
+      sttRetryScheduledForSessionId: listeningSessionId,
+      sttRetryScheduledAt: scheduledAt,
+      sttRetryCancelledAt: null,
+    });
+    this.logSttEvent('stt_retry_scheduled', { listeningSessionId, delayMs: this.sttRetryDelayMs, reason: error.code });
+    this.sttRetryTimer = window.setTimeout(() => {
+      this.sttRetryTimer = null;
+      this.store.setReliabilityDebug({
+        sttRetryScheduledForSessionId: null,
+        sttRetryScheduledAt: null,
+      });
+      if (!this.isListeningSessionActive(listeningSessionId) || this.sttSession) {
+        this.noteStaleCallback('stt:retry-fire', `retry_target_invalid:${listeningSessionId}`);
+        return;
+      }
+
+      void this.startSttSessionForListening(listeningSessionId, true);
+    }, this.sttRetryDelayMs);
   }
 
   private currentContactName() {
