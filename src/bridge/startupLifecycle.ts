@@ -37,6 +37,11 @@ export type BridgePagePayload = {
   }>;
 };
 
+export type StartupLifecycleEnsureResult = {
+  ok: boolean;
+  activeStateWasHint: boolean;
+};
+
 type BridgeLike = {
   createStartUpPageContainer: (payload: any) => Promise<unknown>;
   rebuildPageContainer: (payload: any) => Promise<unknown>;
@@ -369,14 +374,18 @@ export class StartupLifecycleManager {
     return result;
   }
 
+  async waitAfterShutdown(ms = 140) {
+    await delay(ms);
+  }
+
   async ensureStartupPageLifecycle(options: {
     forceReset: boolean;
     minimalStartPayload: BridgePagePayload;
-  }) {
+  }): Promise<StartupLifecycleEnsureResult> {
     if (options.forceReset) {
       this.log('startup page reset requested');
       await this.shutdown('dev-reset');
-      await delay(140);
+      await this.waitAfterShutdown();
       const startupCreateResult = await this.attemptStartupCreate(
         'dev-reset:minimal-single-text',
         options.minimalStartPayload
@@ -384,7 +393,7 @@ export class StartupLifecycleManager {
 
       if (startupCreateResult === 0) {
         this.setLifecycleState('active');
-        return true;
+        return { ok: true, activeStateWasHint: false };
       }
 
       this.log('startup create failed after reset request');
@@ -396,12 +405,12 @@ export class StartupLifecycleManager {
         this.log('Result 1 = invalid request.');
       }
 
-      return false;
+      return { ok: false, activeStateWasHint: false };
     }
 
     if (this.getLifecycleState() === 'active') {
       this.log('startup lifecycle: active page detected, skipping startup create and using rebuild.');
-      return true;
+      return { ok: true, activeStateWasHint: true };
     }
 
     this.log('startup lifecycle: creating startup page for first launch.');
@@ -409,13 +418,13 @@ export class StartupLifecycleManager {
 
     if (startupCreateResult === 0) {
       this.setLifecycleState('active');
-      return true;
+      return { ok: true, activeStateWasHint: false };
     }
 
     if (startupCreateResult === 1) {
-      this.log('startup lifecycle: create returned invalid; likely stale active page exists, continuing with rebuild.');
-      this.setLifecycleState('active');
-      return true;
+      this.log('startup lifecycle: create returned invalid; treating lifecycle as stale hint and continuing with rebuild.');
+      this.setLifecycleState('unknown');
+      return { ok: true, activeStateWasHint: true };
     }
 
     if (startupCreateResult === 2) {
@@ -425,6 +434,6 @@ export class StartupLifecycleManager {
     }
 
     this.log('startup create failed in first-launch flow');
-    return false;
+    return { ok: false, activeStateWasHint: false };
   }
 }

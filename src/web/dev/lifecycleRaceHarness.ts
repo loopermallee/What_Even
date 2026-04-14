@@ -30,6 +30,9 @@ export type LifecycleRaceScenarioResult = {
     micOpen: boolean;
     audioCaptureStatus: AppState['audioCaptureStatus'];
     sttStatus: AppState['sttStatus'];
+    evenStartupStatus: AppState['evenStartupStatus'];
+    evenStartupBlockedCode: AppState['evenStartupBlockedCode'];
+    evenStartupBlockedMessage: AppState['evenStartupBlockedMessage'];
     listeningSessionId: number;
     activeSttListeningSessionId: number | null;
     activeSttSessionToken: number | null;
@@ -90,6 +93,9 @@ function makeDiagnostics(state: AppState) {
     micOpen: state.micOpen,
     audioCaptureStatus: state.audioCaptureStatus,
     sttStatus: state.sttStatus,
+    evenStartupStatus: state.evenStartupStatus,
+    evenStartupBlockedCode: state.evenStartupBlockedCode,
+    evenStartupBlockedMessage: state.evenStartupBlockedMessage,
     listeningSessionId: state.listeningSessionId,
     activeSttListeningSessionId: state.reliability.activeSttListeningSessionId,
     activeSttSessionToken: state.reliability.activeSttSessionToken,
@@ -407,6 +413,27 @@ export class LifecycleRaceHarness {
   private async runSingleScenario(definition: ScenarioDefinition, nonce: number): Promise<LifecycleRaceScenarioResult> {
     const startedAt = Date.now();
     const timeoutMs = definition.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const startupGate = this.getStartupGate();
+
+    if (!startupGate.ok) {
+      const now = Date.now();
+      const state = this.store.getState();
+      return {
+        id: definition.id,
+        name: definition.name,
+        status: 'blocked',
+        cleanupRecovered: false,
+        startedAt,
+        finishedAt: now,
+        durationMs: now - startedAt,
+        timeoutMs,
+        finalScreen: state.screen,
+        transcriptDelta: 0,
+        pendingResponseLeaked: state.pendingResponseId !== null,
+        diagnostics: makeDiagnostics(state),
+        notes: [startupGate.message],
+      };
+    }
 
     const baselineOk = await this.resetToBaseline();
     if (!baselineOk) {
@@ -534,5 +561,19 @@ export class LifecycleRaceHarness {
 
     this.store.log('[harness] cleanup failed to recover baseline invariants.');
     return false;
+  }
+
+  private getStartupGate() {
+    const state = this.store.getState();
+    if (state.evenStartupStatus === 'ready') {
+      return { ok: true as const, message: '' };
+    }
+
+    const code = state.evenStartupBlockedCode ?? 'startup_not_ready';
+    const message = state.evenStartupBlockedMessage ?? 'Even startup is not ready. Run Start on Even and wait for ready state.';
+    return {
+      ok: false as const,
+      message: `Harness blocked (${code}): ${message}`,
+    };
   }
 }

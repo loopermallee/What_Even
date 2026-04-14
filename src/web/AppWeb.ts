@@ -181,10 +181,13 @@ export class AppWeb {
             <div class="debug-grid">
               <div>Screen: <strong>${state.screen}</strong></div>
               <div>Lifecycle: <strong>${state.deviceLifecycleState}</strong></div>
+              <div>Even Startup: <strong>${state.evenStartupStatus}</strong></div>
+              <div>Startup Blocked: <strong>${state.evenStartupBlockedCode ?? 'none'}</strong></div>
               <div>Image Sync: <strong>${state.imageSync.lastResult}</strong></div>
               <div>Last Input: <strong>${state.lastNormalizedInput ?? 'none'}</strong></div>
               <div>Raw Source: <strong>${state.lastRawEvent?.source ?? 'none'}</strong></div>
               <div>Raw Type: <strong>${state.lastRawEvent?.rawEventTypeName ?? 'none'}</strong></div>
+              <div>Startup Message: <strong>${state.evenStartupBlockedMessage ?? 'none'}</strong></div>
             </div>
           </div>
           <div class="debug-section">
@@ -303,6 +306,8 @@ export class AppWeb {
         <div class="harness-result-grid">
           <div>cleanupRecovered: <strong>${result.cleanupRecovered ? 'true' : 'false'}</strong></div>
           <div>duration: <strong>${result.durationMs}ms</strong> (timeout ${result.timeoutMs}ms)</div>
+          <div>startup: <strong>${result.diagnostics.evenStartupStatus}</strong></div>
+          <div>startupBlock: <strong>${result.diagnostics.evenStartupBlockedCode ?? 'none'}</strong></div>
           <div>finalScreen: <strong>${result.finalScreen}</strong></div>
           <div>transcriptDelta: <strong>${result.transcriptDelta}</strong></div>
           <div>pendingResponseLeaked: <strong>${result.pendingResponseLeaked ? 'yes' : 'no'}</strong></div>

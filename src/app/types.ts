@@ -16,6 +16,13 @@ export type Contact = {
 export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
 
 export type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
+export type EvenStartupStatus = 'idle' | 'starting' | 'ready' | 'blocked';
+export type EvenStartupBlockedCode =
+  | 'startup_lifecycle_failed'
+  | 'rebuild_failed_initial'
+  | 'stale_recovery_failed'
+  | 'listener_attach_failed'
+  | 'startup_exception';
 
 export type EventBranchSource = 'listEvent' | 'textEvent' | 'sysEvent' | 'unknown';
 
@@ -95,6 +102,9 @@ export type AppState = {
   responseError: string | null;
   responseStatusTimestamp: number | null;
   deviceLifecycleState: DevicePageLifecycleState;
+  evenStartupStatus: EvenStartupStatus;
+  evenStartupBlockedCode: EvenStartupBlockedCode | null;
+  evenStartupBlockedMessage: string | null;
   lastNormalizedInput: NormalizedInput | null;
   lastRawEvent: RawEventDebugInfo | null;
   imageSync: ImageSyncDebugInfo;

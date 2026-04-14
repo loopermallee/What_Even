@@ -11,7 +11,7 @@ import { StartupLifecycleManager } from './startupLifecycle';
 import { AudioCaptureController } from './audio';
 import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
 import { createAppError, isAppError, redactSensitiveText, toErrorMessage, type AppError } from '../app/errors';
-import type { ErrorCategory } from '../app/types';
+import type { ErrorCategory, EvenStartupBlockedCode } from '../app/types';
 import { requestSttBrokerAuth } from './sttAuth';
 
 function normalizedInputToRawInteraction(input: 'UP' | 'DOWN' | 'TAP' | 'DOUBLE_TAP') {
@@ -112,11 +112,12 @@ export class EvenBridgeApp {
 
   async startOnEven(options?: { forceReset?: boolean }) {
     this.store.log('Waiting for Even bridge...');
+    this.store.setEvenStartupStarting();
+    this.store.setStarted(false);
 
     try {
       this.bridge = await waitForEvenAppBridge();
       this.store.log('Bridge connected.');
-      this.store.setStarted(false);
 
       const forceReset = Boolean(options?.forceReset && import.meta.env.DEV);
       this.store.log(
@@ -163,33 +164,139 @@ export class EvenBridgeApp {
         minimalStartPayload: this.glasses.buildMinimalStartContainer(),
       });
 
-      if (!startupReady) {
+      if (!startupReady.ok) {
+        this.markStartupBlocked(
+          'startup_lifecycle_failed',
+          'Startup lifecycle create/reset failed before rebuild.'
+        );
         return;
       }
 
-      this.store.log('Rebuild step A: compact two-text layout.');
-      const twoTextOk = await this.startupLifecycle.attemptRebuild('startup:two-text', this.glasses.buildTextOnlyRebuildContainer());
-      if (!twoTextOk) {
-        this.store.log('Startup rebuild failed at two-text stage.');
+      let rebuildReady = await this.runStartupRebuildFlow('startup');
+      if (!rebuildReady.ok && startupReady.activeStateWasHint) {
+        this.store.log('Startup rebuild failed after active-state hint. Running one stale-active recovery attempt.');
+        rebuildReady = await this.recoverFromStaleActiveAndRetryOnce();
+        if (!rebuildReady.ok) {
+          this.markStartupBlocked(
+            'stale_recovery_failed',
+            `Stale-active recovery failed at ${rebuildReady.failedStage}.`
+          );
+          return;
+        }
+      } else if (!rebuildReady.ok) {
+        this.markStartupBlocked(
+          'rebuild_failed_initial',
+          `Startup rebuild failed at ${rebuildReady.failedStage}.`
+        );
         return;
       }
 
-      this.store.log('Rebuild step B: compact codec layout with portrait + action text.');
-      const fullRebuildOk = await this.startupLifecycle.attemptRebuild('startup:full-with-portrait', this.glasses.buildRebuildContainer());
-      if (!fullRebuildOk) {
-        this.store.log('Startup rebuild failed at full layout stage.');
+      const listenerAttached = this.setupEvenHubEventListener();
+      if (!listenerAttached) {
+        this.markStartupBlocked(
+          'listener_attach_failed',
+          'Input listener attachment failed after rebuild.'
+        );
+        await this.shutdownPartiallyStartedPage('startup-listener-attach-failed');
         return;
       }
 
-      this.store.setStarted(true);
-      this.setupEvenHubEventListener();
       this.setupStoreAudioLifecycle();
+      this.store.setEvenStartupReady();
+      this.store.setStarted(true);
       this.store.log('Startup lifecycle complete: rebuild flow ready.');
       this.syncNeedsForcedImages = true;
       this.queueSyncFromState();
     } catch (error) {
-      this.store.log(`Start error: ${String(error)}`);
+      const errorMessage = String(error);
+      this.store.log(`Start error: ${errorMessage}`);
+      this.markStartupBlocked('startup_exception', errorMessage);
     }
+  }
+
+  private markStartupBlocked(code: EvenStartupBlockedCode, message: string) {
+    this.store.setStarted(false);
+    this.store.setDeviceLifecycleState('unknown');
+    this.store.setEvenStartupBlocked(code, message);
+    this.store.log(`Even startup blocked (${code}): ${message}`);
+  }
+
+  private async runStartupRebuildFlow(labelPrefix: 'startup' | 'startup-recovery') {
+    if (!this.startupLifecycle) {
+      return {
+        ok: false as const,
+        failedStage: 'missing-lifecycle',
+      };
+    }
+
+    this.store.log('Rebuild step A: compact two-text layout.');
+    const twoTextOk = await this.startupLifecycle.attemptRebuild(
+      `${labelPrefix}:two-text`,
+      this.glasses.buildTextOnlyRebuildContainer()
+    );
+    if (!twoTextOk) {
+      this.store.log(`Startup rebuild failed at two-text stage (${labelPrefix}).`);
+      return { ok: false as const, failedStage: 'two-text' as const };
+    }
+
+    this.store.log('Rebuild step B: compact codec layout with portrait + action text.');
+    const fullRebuildOk = await this.startupLifecycle.attemptRebuild(
+      `${labelPrefix}:full-with-portrait`,
+      this.glasses.buildRebuildContainer()
+    );
+    if (!fullRebuildOk) {
+      this.store.log(`Startup rebuild failed at full layout stage (${labelPrefix}).`);
+      return { ok: false as const, failedStage: 'full-layout' as const };
+    }
+
+    return { ok: true as const, failedStage: null };
+  }
+
+  private async recoverFromStaleActiveAndRetryOnce() {
+    if (!this.startupLifecycle) {
+      return {
+        ok: false as const,
+        failedStage: 'missing-lifecycle',
+      };
+    }
+
+    this.store.setDeviceLifecycleState('unknown');
+    await this.startupLifecycle.shutdown('startup-stale-recovery');
+    await this.startupLifecycle.waitAfterShutdown();
+
+    const startupCreateResult = await this.startupLifecycle.attemptStartupCreate(
+      'startup-stale-recovery:minimal-single-text',
+      this.glasses.buildMinimalStartContainer()
+    );
+    if (startupCreateResult !== 0) {
+      this.store.log(`Startup stale-active recovery create failed with result ${startupCreateResult}.`);
+      return { ok: false as const, failedStage: 'recovery-create' as const };
+    }
+
+    return this.runStartupRebuildFlow('startup-recovery');
+  }
+
+  private async shutdownPartiallyStartedPage(reason: string) {
+    if (!this.startupLifecycle) {
+      return;
+    }
+
+    if (this.unsubscribeEvenHubEvents) {
+      this.unsubscribeEvenHubEvents();
+      this.unsubscribeEvenHubEvents = null;
+    }
+
+    if (this.feedbackManager) {
+      this.feedbackManager.dispose();
+      this.feedbackManager = null;
+    }
+
+    this.store.setStarted(false);
+    this.store.setDeviceLifecycleState('unknown');
+    await this.startupLifecycle.shutdown(reason).catch((error) => {
+      this.store.log(`Partial-start shutdown failed (${reason}): ${String(error)}`);
+    });
+    this.store.setDeviceLifecycleState('unknown');
   }
 
   queueSyncFromState() {
@@ -287,7 +394,7 @@ export class EvenBridgeApp {
 
   private setupEvenHubEventListener() {
     if (!this.bridge) {
-      return;
+      return false;
     }
 
     if (this.unsubscribeEvenHubEvents) {
@@ -323,11 +430,18 @@ export class EvenBridgeApp {
       },
     });
 
-    this.unsubscribeEvenHubEvents = this.bridge.onEvenHubEvent((event) => {
-      this.handleEvenHubEvent(event);
-    });
+    try {
+      this.unsubscribeEvenHubEvents = this.bridge.onEvenHubEvent((event) => {
+        this.handleEvenHubEvent(event);
+      });
+    } catch (error) {
+      this.store.log(`Input listener attach failed: ${String(error)}`);
+      this.unsubscribeEvenHubEvents = null;
+      return false;
+    }
 
     this.store.log('Input listener ready (UP/DOWN/TAP/DOUBLE TAP).');
+    return true;
   }
 
   private setupStoreAudioLifecycle() {

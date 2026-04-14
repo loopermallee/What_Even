@@ -5,6 +5,7 @@ import type {
   AppScreen,
   AppState,
   DevicePageLifecycleState,
+  EvenStartupBlockedCode,
   NormalizedInput,
   RawEventDebugInfo,
   ReliabilityDebugInfo,
@@ -124,6 +125,9 @@ export function createInitialState(): AppState {
     transcript: [],
     ...createInitialTurnState(),
     deviceLifecycleState: readDevicePageLifecycleState(),
+    evenStartupStatus: 'idle',
+    evenStartupBlockedCode: null,
+    evenStartupBlockedMessage: null,
     lastNormalizedInput: null,
     lastRawEvent: null,
     imageSync: {
@@ -270,6 +274,37 @@ export class AppStore {
   setDeviceLifecycleState(value: DevicePageLifecycleState) {
     writeDevicePageLifecycleState(value);
     this.patch({ deviceLifecycleState: value });
+  }
+
+  setEvenStartupStarting() {
+    this.patch({
+      evenStartupStatus: 'starting',
+      evenStartupBlockedCode: null,
+      evenStartupBlockedMessage: null,
+    });
+  }
+
+  setEvenStartupReady() {
+    this.patch({
+      evenStartupStatus: 'ready',
+      evenStartupBlockedCode: null,
+      evenStartupBlockedMessage: null,
+    });
+  }
+
+  setEvenStartupBlocked(code: EvenStartupBlockedCode, message: string) {
+    this.patch({
+      evenStartupStatus: 'blocked',
+      evenStartupBlockedCode: code,
+      evenStartupBlockedMessage: message,
+    });
+  }
+
+  clearEvenStartupBlocked() {
+    this.patch({
+      evenStartupBlockedCode: null,
+      evenStartupBlockedMessage: null,
+    });
   }
 
   setSelectedContactIndex(index: number) {
