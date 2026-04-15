@@ -1,6 +1,57 @@
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DEEPGRAM_AUTH_URL = 'https://api.deepgram.com/v1/auth/grant';
+
+function stripWrappingQuotes(value) {
+  if (
+    (value.startsWith('"') && value.endsWith('"'))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
+function loadLocalDotEnv() {
+  const envPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env');
+  let contents = '';
+  try {
+    contents = fs.readFileSync(envPath, 'utf8');
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return;
+    }
+
+    console.warn(`[stt-broker] dotenv_load_failed path=${envPath}`);
+    return;
+  }
+
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) {
+      continue;
+    }
+
+    const value = stripWrappingQuotes(line.slice(separatorIndex + 1).trim());
+    process.env[key] = value;
+  }
+}
+
+loadLocalDotEnv();
 
 function parseRequiredEnv(name) {
   const value = String(process.env[name] ?? '').trim();

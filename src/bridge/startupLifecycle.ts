@@ -74,6 +74,10 @@ function toBridgePayload(payload: BridgePagePayload): BridgePagePayload {
       yPosition: item.yPosition,
       width: item.width,
       height: item.height,
+      borderWidth: (item as { borderWidth?: number }).borderWidth,
+      borderColor: (item as { borderColor?: number }).borderColor,
+      borderRdaius: (item as { borderRdaius?: number }).borderRdaius,
+      paddingLength: (item as { paddingLength?: number }).paddingLength,
       isEventCapture: item.isEventCapture,
       itemContainer: item.itemContainer
         ? {
@@ -91,6 +95,10 @@ function toBridgePayload(payload: BridgePagePayload): BridgePagePayload {
       yPosition: item.yPosition,
       width: item.width,
       height: item.height,
+      borderWidth: (item as { borderWidth?: number }).borderWidth,
+      borderColor: (item as { borderColor?: number }).borderColor,
+      borderRdaius: (item as { borderRdaius?: number }).borderRdaius,
+      paddingLength: (item as { paddingLength?: number }).paddingLength,
       isEventCapture: item.isEventCapture,
       content: item.content,
     })),
@@ -333,7 +341,7 @@ export class StartupLifecycleManager {
 
   async attemptRebuild(label: string, payload: BridgePagePayload) {
     const bridgePayload = toBridgePayload(payload);
-    this.log(`Rebuild attempt (${label}) bridge payload: ${safeSerialize(describeBridgePayload(bridgePayload))}`);
+    this.log(`Rebuild attempt (${label}) exact payload: ${safeSerialize(bridgePayload)}`);
     this.log(`Rebuild attempt (${label}) debug meta: ${safeSerialize(getDebugPayloadMeta(payload))}`);
     const validation = validateRebuildPayload(payload);
 
@@ -358,11 +366,10 @@ export class StartupLifecycleManager {
   }
 
   async attemptStartupCreate(label: string, payload: BridgePagePayload) {
-    const bridgePayload = toBridgePayload(payload);
-    this.log(`Startup create attempt (${label}) bridge payload: ${safeSerialize(describeBridgePayload(bridgePayload))}`);
+    this.log(`Startup create attempt (${label}) exact payload: ${safeSerialize(payload)}`);
     this.log(`Startup create attempt (${label}) debug meta: ${safeSerialize(getDebugPayloadMeta(payload))}`);
-    const result = Number(await this.bridge.createStartUpPageContainer(bridgePayload as any));
-    this.log(`startup create result (${label}): ${result}`);
+    const result = Number(await this.bridge.createStartUpPageContainer(payload as any));
+    this.log(`startup create exact result code (${label}): ${result}`);
     return result;
   }
 
@@ -387,12 +394,13 @@ export class StartupLifecycleManager {
       await this.shutdown('dev-reset');
       await this.waitAfterShutdown();
       const startupCreateResult = await this.attemptStartupCreate(
-        'dev-reset:minimal-single-text',
+        'dev-reset:minimal-two-text',
         options.minimalStartPayload
       );
 
       if (startupCreateResult === 0) {
         this.setLifecycleState('active');
+        this.log('startup lifecycle: fallback/rebuild skipped=false after reset create success.');
         return { ok: true, activeStateWasHint: false };
       }
 
@@ -410,21 +418,24 @@ export class StartupLifecycleManager {
 
     if (this.getLifecycleState() === 'active') {
       this.log('startup lifecycle: active page detected, skipping startup create and using rebuild.');
+      this.log('startup lifecycle: fallback/rebuild skipped=false because active lifecycle hint allows rebuild path.');
       return { ok: true, activeStateWasHint: true };
     }
 
     this.log('startup lifecycle: creating startup page for first launch.');
-    const startupCreateResult = await this.attemptStartupCreate('first-launch:minimal-single-text', options.minimalStartPayload);
+    const startupCreateResult = await this.attemptStartupCreate('first-launch:minimal-two-text', options.minimalStartPayload);
 
     if (startupCreateResult === 0) {
       this.setLifecycleState('active');
+      this.log('startup lifecycle: fallback/rebuild skipped=false after first-launch create success.');
       return { ok: true, activeStateWasHint: false };
     }
 
     if (startupCreateResult === 1) {
-      this.log('startup lifecycle: create returned invalid; treating lifecycle as stale hint and continuing with rebuild.');
+      this.log('startup lifecycle: create returned invalid; treating as hard invalid-parameter failure.');
+      this.log('startup lifecycle: fallback/rebuild skipped=true because startup create failed.');
       this.setLifecycleState('unknown');
-      return { ok: true, activeStateWasHint: true };
+      return { ok: false, activeStateWasHint: false };
     }
 
     if (startupCreateResult === 2) {
@@ -434,6 +445,7 @@ export class StartupLifecycleManager {
     }
 
     this.log('startup create failed in first-launch flow');
+    this.log('startup lifecycle: fallback/rebuild skipped=true because startup create failed.');
     return { ok: false, activeStateWasHint: false };
   }
 }

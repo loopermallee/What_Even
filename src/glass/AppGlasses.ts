@@ -1,6 +1,7 @@
 import type { AppStore } from '../app/state';
 import type { NormalizedInput, RawEventDebugInfo } from '../app/types';
 import type { BridgePagePayload } from '../bridge/startupLifecycle';
+import { CreateStartUpPageContainer, TextContainerProperty } from '@evenrealities/even_hub_sdk';
 import { selectActionItemsForGlasses, selectDialogueForGlasses, selectGlassScreenView } from './selectors';
 import { GLASSES_CONTAINERS } from './shared';
 
@@ -11,6 +12,7 @@ export type InputHandleResult = {
 
 export class AppGlasses {
   private readonly store: AppStore;
+  private readonly cursorBlinkIntervalMs = 520;
 
   constructor(store: AppStore) {
     this.store = store;
@@ -26,11 +28,33 @@ export class AppGlasses {
   }
 
   getDialogueText() {
-    return selectDialogueForGlasses(this.store.getState());
+    return selectDialogueForGlasses(this.store.getState(), this.isCursorVisible());
+  }
+
+  getStructuralRebuildSignature() {
+    const rebuild = this.buildRebuildContainer();
+    return JSON.stringify({
+      containerTotalNum: rebuild.containerTotalNum,
+      imageObject: rebuild.imageObject ?? [],
+      textObject: (rebuild.textObject ?? []).map(({ content: _content, ...container }) => container),
+      listObject: rebuild.listObject ?? [],
+    });
   }
 
   getActionItems() {
     return selectActionItemsForGlasses(this.store.getState());
+  }
+
+  shouldAnimateCursor() {
+    return selectGlassScreenView(this.store.getState()).liveLineKind !== 'none';
+  }
+
+  getCursorBlinkIntervalMs() {
+    return this.cursorBlinkIntervalMs;
+  }
+
+  private isCursorVisible() {
+    return Math.floor(Date.now() / this.cursorBlinkIntervalMs) % 2 === 0;
   }
 
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
@@ -97,6 +121,14 @@ export class AppGlasses {
     }
 
     if (state.screen === 'listening') {
+      const listeningState = this.store.getState();
+      const hasLiveDraft =
+        listeningState.sttPartialTranscript.trim().length > 0 ||
+        (
+          listeningState.sttDraftDisplayText.trim().length > 0 &&
+          listeningState.sttDraftVisibleUntil !== null &&
+          Date.now() <= listeningState.sttDraftVisibleUntil
+        );
       if (input === 'UP') {
         this.store.setListeningActionIndex(0);
         return { changed: true, requestClose: false };
@@ -110,6 +142,8 @@ export class AppGlasses {
       if (input === 'TAP') {
         if (this.store.getState().listeningActionIndex === 0) {
           this.store.continueListeningAndStartActiveCall();
+        } else if (hasLiveDraft) {
+          this.store.clearSttPartialTranscript();
         } else {
           this.store.endListening();
         }
@@ -182,10 +216,40 @@ export class AppGlasses {
   }
 
   buildMinimalStartContainer(): BridgePagePayload {
-    return {
-      containerTotalNum: 1,
-      listObject: [this.buildStatusListContainer()],
-    };
+    const header = new TextContainerProperty({
+      xPosition: 0,
+      yPosition: 0,
+      width: 576,
+      height: 28,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 4,
+      containerID: GLASSES_CONTAINERS.startupHeaderText.id,
+      containerName: GLASSES_CONTAINERS.startupHeaderText.name,
+      content: 'WHAT EVEN',
+      isEventCapture: 0,
+    });
+
+    const body = new TextContainerProperty({
+      xPosition: 0,
+      yPosition: 28,
+      width: 576,
+      height: 260,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 4,
+      containerID: GLASSES_CONTAINERS.startupBodyText.id,
+      containerName: GLASSES_CONTAINERS.startupBodyText.name,
+      content: 'Bridge connected.\nLoading on-device UI...',
+      isEventCapture: 1,
+    });
+
+    return new CreateStartUpPageContainer({
+      containerTotalNum: 2,
+      textObject: [header, body],
+    });
   }
 
   buildTextOnlyRebuildContainer(): BridgePagePayload {

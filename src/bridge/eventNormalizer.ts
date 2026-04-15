@@ -302,16 +302,39 @@ function buildListContainerKey(inspection: InputInspection) {
   return `${inspection.source}|${idPart}|name:${namePart}`;
 }
 
-function isSimulatorStatusListTapFallback(inspection: InputInspection) {
+function isStatusListContainer(inspection: InputInspection) {
+  return (
+    inspection.source === 'listEvent' &&
+    inspection.containerID === GLASSES_CONTAINERS.statusList.id &&
+    inspection.containerName === GLASSES_CONTAINERS.statusList.name
+  );
+}
+
+function getInspectionTokens(inspection: InputInspection) {
+  return inspection.eventTypeCandidates.length > 0
+    ? inspection.eventTypeCandidates
+    : [inspection.normalizedTypeToken];
+}
+
+function isSimulatorStatusListUnknownTap(inspection: InputInspection) {
   if (inspection.source !== 'listEvent') {
     return false;
   }
 
-  const matchesStatusListContainer =
-    inspection.containerID === GLASSES_CONTAINERS.statusList.id &&
-    inspection.containerName === GLASSES_CONTAINERS.statusList.name;
+  if (!isStatusListContainer(inspection)) {
+    return false;
+  }
 
-  if (!matchesStatusListContainer) {
+  const tokens = getInspectionTokens(inspection);
+  if (!tokens.every((token) => token === 'UNKNOWN_EVENT')) {
+    return false;
+  }
+
+  return inspection.currentSelectItemIndex !== null || inspection.currentSelectItemName !== null;
+}
+
+function isSimulatorStatusListTapFallback(inspection: InputInspection) {
+  if (!isStatusListContainer(inspection)) {
     return false;
   }
 
@@ -319,11 +342,7 @@ function isSimulatorStatusListTapFallback(inspection: InputInspection) {
     return false;
   }
 
-  const tokens = inspection.eventTypeCandidates.length > 0
-    ? inspection.eventTypeCandidates
-    : [inspection.normalizedTypeToken];
-
-  return tokens.every((token) => token === 'UNKNOWN_EVENT');
+  return getInspectionTokens(inspection).every((token) => token === 'UNKNOWN_EVENT');
 }
 
 export class EvenInputNormalizer {
@@ -373,15 +392,17 @@ export class EvenInputNormalizer {
   }
 
   private normalizeInspection(inspection: InputInspection): NormalizedInput | null {
+    if (isSimulatorStatusListUnknownTap(inspection)) {
+      return 'TAP';
+    }
+
     const movement = this.getMovementFromListIndex(inspection);
     if (movement) {
       return movement;
     }
 
     if (inspection.source === 'listEvent') {
-      const tokens = inspection.eventTypeCandidates.length > 0
-        ? inspection.eventTypeCandidates
-        : [inspection.normalizedTypeToken];
+      const tokens = getInspectionTokens(inspection);
 
       if (tokens.some((token) => isBoundaryToken(token))) {
         return normalizeInputFromTypeToken(inspection);
@@ -411,6 +432,10 @@ export class EvenInputNormalizer {
 
   private getMovementFromListIndex(inspection: InputInspection): NormalizedInput | null {
     if (inspection.source !== 'listEvent' || inspection.currentSelectItemIndex === null) {
+      return null;
+    }
+
+    if (isSimulatorStatusListUnknownTap(inspection)) {
       return null;
     }
 

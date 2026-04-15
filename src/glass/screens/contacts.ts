@@ -6,15 +6,13 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
 
   return {
-    screenLabel: 'CONTACTS',
+    screenLabel: 'CODEC DIRECTORY',
+    statusLabel: `CHANNEL ${state.selectedContactIndex + 1}/${CONTACTS.length}`,
     portraitAsset: getPortraitAssetForState(state),
-    dialogue: wrapText([
-      'CODEC DIRECTORY',
-      `SELECT ${contact.name.toUpperCase()}`,
-      `FREQ ${contact.frequency}`,
-      `ENTRY ${state.selectedContactIndex + 1}/${CONTACTS.length}`,
-    ].join('\n'), 27, 4),
+    dialogue: wrapText(`${contact.name.toUpperCase()} ${contact.frequency}`, 27, 2),
     actions: CONTACTS.map((item) => item.name),
     selectedActionIndex: state.selectedContactIndex,
+    mode: 'compact',
+    liveLineKind: 'none',
   };
 }

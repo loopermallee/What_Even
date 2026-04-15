@@ -10,12 +10,12 @@
     "broker": "node server/sttBroker.mjs"
   },
   "devDependencies": {
-    "@evenrealities/evenhub-cli": "^0.1.9",
+    "@evenrealities/evenhub-cli": "^0.1.11",
     "@evenrealities/evenhub-simulator": "^0.6.2",
     "typescript": "~5.9.3",
     "vite": "^8.0.1"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.7"
+    "@evenrealities/even_hub_sdk": "^0.0.10"
   }
 }

@@ -1,5 +1,6 @@
 import { CONTACTS } from './contacts';
 import { generateDeterministicResponse } from './responseEngine';
+import { hasEvenNativeHost } from '../bridge/nativeHost';
 import type {
   AudioCaptureStatus,
   AppScreen,
@@ -72,6 +73,8 @@ function createInitialSttState(listeningSessionId: number) {
   return {
     sttStatus: 'idle' as SttStatus,
     sttPartialTranscript: '',
+    sttDraftDisplayText: '',
+    sttDraftVisibleUntil: null as number | null,
     lastTranscriptAt: null as number | null,
     sttError: null as string | null,
     listeningSessionId,
@@ -115,6 +118,8 @@ export function createInitialState(): AppState {
     screen: 'contacts',
     screenBeforeDebug: 'contacts',
     started: false,
+    simulatorSessionDetected: false,
+    evenNativeHostDetected: hasEvenNativeHost(),
     selectedContactIndex: 0,
     incomingActionIndex: 0,
     listeningActionIndex: 0,
@@ -246,6 +251,14 @@ export class AppStore {
 
   setStarted(started: boolean) {
     this.patch({ started });
+  }
+
+  setSimulatorSessionDetected(detected: boolean) {
+    this.patch({ simulatorSessionDetected: detected });
+  }
+
+  setEvenNativeHostDetected(detected: boolean) {
+    this.patch({ evenNativeHostDetected: detected });
   }
 
   setScreen(screen: AppScreen) {
@@ -631,18 +644,26 @@ export class AppStore {
       return;
     }
 
+    const now = Date.now();
     this.patch({
       sttPartialTranscript: text,
-      lastTranscriptAt: Date.now(),
+      sttDraftDisplayText: text.trim() ? text : this.state.sttDraftDisplayText,
+      sttDraftVisibleUntil: text.trim() ? null : this.state.sttDraftVisibleUntil,
+      lastTranscriptAt: now,
     });
   }
 
   clearSttPartialTranscript() {
-    if (!this.state.sttPartialTranscript) {
+    if (!this.state.sttPartialTranscript && !this.state.sttDraftDisplayText) {
       return;
     }
 
-    this.patch({ sttPartialTranscript: '' });
+    const preservedDraft = this.state.sttPartialTranscript.trim() || this.state.sttDraftDisplayText.trim();
+    this.patch({
+      sttPartialTranscript: '',
+      sttDraftDisplayText: preservedDraft,
+      sttDraftVisibleUntil: preservedDraft ? Date.now() + 1600 : null,
+    });
   }
 
   commitUserFinalTranscript(text: string, options?: { speaker?: string; contactName?: string }) {
@@ -666,6 +687,8 @@ export class AppStore {
       transcript,
       activeTranscriptCursor: getLatestTranscriptCursor(transcript),
       sttPartialTranscript: '',
+      sttDraftDisplayText: '',
+      sttDraftVisibleUntil: null,
       pendingResponseId: null,
       turnState: this.state.screen === 'active' ? 'awaiting_user' : this.state.turnState,
       responseError: null,

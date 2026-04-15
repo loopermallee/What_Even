@@ -5,14 +5,13 @@ export function buildEndedScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
 
   return {
-    screenLabel: 'ENDED',
+    screenLabel: `${contact.name.toUpperCase()} ${contact.frequency}`,
+    statusLabel: 'CALL ENDED',
     portraitAsset: getPortraitAssetForState(state),
-    dialogue: wrapText([
-      'CONNECTION ENDED',
-      `${contact.name.toUpperCase()} LINK CLOSED`,
-      `FREQ ${contact.frequency}`,
-    ].join('\n'), 27, 4),
-    actions: ['Redial', 'Back'],
+    dialogue: wrapText('Link closed. Select your next action.', 27, 2),
+    actions: ['REDIAL', 'BACK'],
     selectedActionIndex: state.endedActionIndex,
+    mode: 'compact',
+    liveLineKind: 'none',
   };
 }

@@ -1,4 +1,5 @@
 export type SpeakerSide = 'left' | 'right';
+export type CodecCharacterId = 'snake' | 'otacon' | 'meryl' | 'colonel';
 
 export type DialogueLine = {
   speaker: SpeakerSide;
@@ -10,6 +11,7 @@ export type Contact = {
   code: string;
   frequency: string;
   portraitTag: string;
+  characterId?: CodecCharacterId;
   dialogue: DialogueLine[];
 };
 
@@ -18,7 +20,9 @@ export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ende
 export type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
 export type EvenStartupStatus = 'idle' | 'starting' | 'ready' | 'blocked';
 export type EvenStartupBlockedCode =
+  | 'native_host_missing'
   | 'startup_lifecycle_failed'
+  | 'device_session_missing'
   | 'rebuild_failed_initial'
   | 'stale_recovery_failed'
   | 'listener_attach_failed'
@@ -90,6 +94,8 @@ export type AppState = {
   screen: AppScreen;
   screenBeforeDebug: Exclude<AppScreen, 'debug'>;
   started: boolean;
+  simulatorSessionDetected: boolean;
+  evenNativeHostDetected: boolean;
   selectedContactIndex: number;
   incomingActionIndex: number;
   listeningActionIndex: number;
@@ -120,6 +126,8 @@ export type AppState = {
   audioError: string | null;
   sttStatus: SttStatus;
   sttPartialTranscript: string;
+  sttDraftDisplayText: string;
+  sttDraftVisibleUntil: number | null;
   lastTranscriptAt: number | null;
   sttError: string | null;
   listeningSessionId: number;

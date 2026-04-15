@@ -1,9 +1,10 @@
-import type { Contact } from './types';
+import type { CodecCharacterId, Contact } from './types';
 
 export const RIGHT_CHARACTER = {
   name: 'Snake',
   code: 'SNAKE',
   portraitTag: 'SN',
+  characterId: 'snake' as CodecCharacterId,
 };
 
 export const CONTACTS: Contact[] = [
@@ -12,6 +13,7 @@ export const CONTACTS: Contact[] = [
     code: 'CMD',
     frequency: '140.85',
     portraitTag: 'CO',
+    characterId: 'colonel',
     dialogue: [
       { speaker: 'left', text: 'Snake, codec check. Your signal is stable now.' },
       { speaker: 'right', text: 'I read you. What is the situation?' },
@@ -24,6 +26,7 @@ export const CONTACTS: Contact[] = [
     code: 'ENG',
     frequency: '141.12',
     portraitTag: 'OT',
+    characterId: 'otacon',
     dialogue: [
       { speaker: 'left', text: 'Snake, I can keep an eye on the system feed from here.' },
       { speaker: 'right', text: 'Good. Let me know if anything changes.' },
@@ -36,6 +39,7 @@ export const CONTACTS: Contact[] = [
     code: 'ALY',
     frequency: '140.15',
     portraitTag: 'MR',
+    characterId: 'meryl',
     dialogue: [
       { speaker: 'left', text: 'Snake, I am in position. The route ahead is still open.' },
       { speaker: 'right', text: 'Good. Keep your head down and do not rush it.' },

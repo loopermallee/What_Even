@@ -1,45 +1,87 @@
 import type { AppState } from '../../app/types';
-import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from '../../app/presentation';
-import { getPortraitAssetForState, getSelectedContact, wrapText, type GlassScreenView } from '../shared';
+import {
+  formatGlassSpeakerLine,
+  getLatestTranscriptEntryByRole,
+  getPortraitAssetForState,
+  getSelectedContact,
+  shouldUseReadMode,
+  wrapText,
+  type GlassScreenView,
+} from '../shared';
+
+function getListeningPresentation(state: AppState) {
+  const partial = state.sttPartialTranscript.trim();
+  const draftGraceActive = Boolean(
+    !partial &&
+    state.sttDraftDisplayText.trim() &&
+    state.sttDraftVisibleUntil !== null &&
+    Date.now() <= state.sttDraftVisibleUntil
+  );
+  const visibleDraft = partial || (draftGraceActive ? state.sttDraftDisplayText.trim() : '');
+  if (visibleDraft) {
+    return {
+      statusLabel: 'SPEAK',
+      speakerLabel: 'YOU',
+      line: visibleDraft,
+      liveLineKind: partial ? 'user' as const : 'none' as const,
+      actions: ['SEND', 'RETRY'],
+    };
+  }
+
+  const latestContact = getLatestTranscriptEntryByRole(state, ['contact', 'system']);
+  if (latestContact) {
+    return {
+      statusLabel: 'LISTEN',
+      speakerLabel: latestContact.speaker.toUpperCase(),
+      line: latestContact.text,
+      liveLineKind: 'none' as const,
+      actions: ['REPLY', 'END'],
+    };
+  }
+
+  return {
+    statusLabel: 'YOUR TURN',
+    speakerLabel: 'YOU',
+    line: 'Speak when ready.',
+    liveLineKind: 'none' as const,
+    actions: ['REPLY', 'END'],
+  };
+}
 
 export function buildListeningScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
-  const canonicalLabel = getCanonicalTurnLabel(state.turnState);
-  const partial = state.sttPartialTranscript.trim();
-  const latestCommitted = [...state.transcript].reverse().find((entry) => entry.text.trim().length > 0)?.text ?? '';
-  const noConfirmedSpeech = shouldShowNoConfirmedSpeech(state);
-  const frameAgeMs = state.lastAudioFrameAt === null ? null : Math.max(0, Date.now() - state.lastAudioFrameAt);
-  const freshness = frameAgeMs === null ? 'NOFR' : frameAgeMs <= 1000 ? 'LIVE' : 'STLE';
-  const activity = Math.round(state.listeningActivityLevel * 100);
-  const listeningLabel = state.sttStatus === 'streaming' || state.micOpen ? 'Listening' : canonicalLabel;
-  const statusLine = state.sttError
-    ? 'STT issue'
-    : `${listeningLabel} MIC ${state.micOpen ? 'ON' : 'OFF'}`;
-  const hearLine = partial
-    ? `PARTIAL ${partial}`
-    : noConfirmedSpeech
-      ? 'No confirmed speech'
-      : 'PARTIAL ...';
-  const lastLine = state.sttError
-    ? `ERR ${state.sttStatus.toUpperCase()}`
-    : latestCommitted
-      ? `LAST ${latestCommitted}`
-      : `AUD ${activity}% ${freshness} ${state.audioCaptureStatus.toUpperCase()}`;
+  const presentation = getListeningPresentation(state);
+  const mode = shouldUseReadMode({
+    label: presentation.speakerLabel,
+    text: presentation.line,
+  })
+    ? 'read'
+    : 'compact';
 
   return {
-    screenLabel: 'LISTENING',
+    screenLabel: `${contact.name.toUpperCase()} ${contact.frequency}`,
+    statusLabel: presentation.statusLabel,
     portraitAsset: getPortraitAssetForState(state),
-    dialogue: wrapText(
-      [
-        `${contact.name.toUpperCase()} ${contact.frequency}`,
-        statusLine,
-        hearLine,
-        lastLine,
-      ].join('\n'),
-      27,
-      4
-    ),
-    actions: ['Continue', 'End'],
+    dialogue: mode === 'read'
+      ? formatGlassSpeakerLine({
+        label: presentation.speakerLabel,
+        text: presentation.line,
+        maxLines: 6,
+        cursorVisible: presentation.liveLineKind !== 'none',
+      })
+      : wrapText(
+        formatGlassSpeakerLine({
+          label: presentation.speakerLabel,
+          text: presentation.line,
+          maxLines: 3,
+          cursorVisible: presentation.liveLineKind !== 'none',
+        }),
+        27,
+        3
+      ),
+    actions: presentation.actions,
     selectedActionIndex: state.listeningActionIndex,
+    mode,
+    liveLineKind: presentation.liveLineKind,
   };
 }

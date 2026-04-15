@@ -53,9 +53,53 @@ function normalizeDeepgramTranscriptPayload(payload: unknown): { text: string; i
   };
 }
 
+function normalizeDeepgramErrorPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const type = String(record.type ?? '').trim().toLowerCase();
+  const candidates = [record.description, record.error, record.err_msg, record.message];
+  const detail = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+  if (!detail) {
+    return null;
+  }
+
+  const normalizedDetail = String(detail).trim();
+  if (!normalizedDetail) {
+    return null;
+  }
+
+  if (type === 'error' || type === 'warning' || type === 'close') {
+    return normalizedDetail;
+  }
+
+  if ('error' in record || 'err_msg' in record) {
+    return normalizedDetail;
+  }
+
+  return null;
+}
+
+function describeCloseEvent(event: CloseEvent) {
+  const reason = event.reason ? `, reason=${event.reason}` : '';
+  return `code=${event.code}, clean=${event.wasClean ? 'yes' : 'no'}${reason}`;
+}
+
+function looksLikeJwt(accessToken: string) {
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(accessToken);
+}
+
+function buildDeepgramWebSocketProtocols(accessToken: string) {
+  const authScheme = looksLikeJwt(accessToken) ? 'bearer' : 'token';
+  return [authScheme, accessToken];
+}
+
 export class DeepgramStreamingSttSession implements StreamingSttSession {
   private readonly accessToken: string;
   private readonly wsUrl: string;
+  private readonly model: string;
   private ws: WebSocket | null = null;
   private callbacks: CallbackBundle = {
     onPartial: () => undefined,
@@ -64,9 +108,10 @@ export class DeepgramStreamingSttSession implements StreamingSttSession {
     onStateChange: () => undefined,
   };
 
-  constructor(options: { accessToken: string; wsUrl?: string }) {
+  constructor(options: { accessToken: string; wsUrl?: string; model?: string }) {
     this.accessToken = options.accessToken;
     this.wsUrl = options.wsUrl ?? 'wss://api.deepgram.com/v1/listen';
+    this.model = options.model ?? 'nova-3';
   }
 
   onPartial(cb: (text: string) => void) {
@@ -93,6 +138,7 @@ export class DeepgramStreamingSttSession implements StreamingSttSession {
     this.callbacks.onStateChange('connecting');
 
     const url = new URL(this.wsUrl);
+    url.searchParams.set('model', this.model);
     url.searchParams.set('encoding', 'linear16');
     url.searchParams.set('sample_rate', '16000');
     url.searchParams.set('channels', '1');
@@ -100,7 +146,9 @@ export class DeepgramStreamingSttSession implements StreamingSttSession {
     url.searchParams.set('punctuate', 'true');
     url.searchParams.set('endpointing', '300');
 
-    this.ws = new WebSocket(url.toString(), ['token', this.accessToken]);
+    // Deepgram documents browser-side /v1/listen auth via Sec-WebSocket-Protocol
+    // when custom Authorization headers are unavailable.
+    this.ws = new WebSocket(url.toString(), buildDeepgramWebSocketProtocols(this.accessToken));
     this.ws.binaryType = 'arraybuffer';
 
     await new Promise<void>((resolve, reject) => {
@@ -109,26 +157,67 @@ export class DeepgramStreamingSttSession implements StreamingSttSession {
         return;
       }
 
-      this.ws.onopen = () => {
-        this.callbacks.onStateChange('streaming');
+      const ws = this.ws;
+      let settled = false;
+
+      const rejectOnce = (error: Error) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        reject(error);
+      };
+
+      const resolveOnce = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
         resolve();
       };
 
-      this.ws.onerror = () => {
-        this.callbacks.onStateChange('error');
-        this.callbacks.onError('Deepgram websocket error');
-        reject(new Error('Deepgram websocket error'));
+      ws.onopen = () => {
+        this.callbacks.onStateChange('streaming');
+        resolveOnce();
       };
 
-      this.ws.onclose = () => {
+      ws.onerror = () => {
+        if (settled) {
+          this.callbacks.onStateChange('error');
+          this.callbacks.onError('Deepgram websocket error');
+          return;
+        }
+      };
+
+      ws.onclose = (event) => {
         this.ws = null;
+        if (settled) {
+          return;
+        }
+
+        const detail = describeCloseEvent(event);
+        const message = `Deepgram websocket closed before open (${detail})`;
+        this.callbacks.onStateChange('error');
+        this.callbacks.onError(message);
+        rejectOnce(new Error(message));
       };
 
-      this.ws.onmessage = (event) => {
+      ws.onmessage = (event) => {
         let parsed: unknown;
         try {
           parsed = JSON.parse(String(event.data));
         } catch {
+          return;
+        }
+
+        const providerError = normalizeDeepgramErrorPayload(parsed);
+        if (providerError) {
+          const message = `Deepgram provider error: ${providerError}`;
+          this.callbacks.onStateChange('error');
+          this.callbacks.onError(message);
+          rejectOnce(new Error(message));
           return;
         }
 

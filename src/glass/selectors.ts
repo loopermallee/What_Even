@@ -31,9 +31,13 @@ export function selectGlassScreenView(state: AppState): GlassScreenView {
   return buildListeningScreen(state);
 }
 
-export function selectDialogueForGlasses(state: AppState) {
+export function selectDialogueForGlasses(state: AppState, cursorVisible = false) {
   const view = selectGlassScreenView(state);
-  return `${view.screenLabel}\n${view.dialogue}`;
+  const dialogue = cursorVisible && view.liveLineKind !== 'none'
+    ? view.dialogue
+    : view.dialogue.replace(/ \|$/gm, '');
+
+  return [view.screenLabel, view.statusLabel, dialogue].filter(Boolean).join('\n');
 }
 
 export function selectActionItemsForGlasses(state: AppState) {

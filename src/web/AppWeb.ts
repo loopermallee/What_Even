@@ -1,4 +1,4 @@
-import { CONTACTS } from '../app/contacts';
+import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
 import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from '../app/presentation';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
@@ -7,9 +7,11 @@ import {
   type LifecycleRaceScenarioId,
   type LifecycleRaceScenarioResult,
 } from './dev/lifecycleRaceHarness';
-import { renderCodecShell } from './components/CodecShell';
-import { renderControlsPanel } from './components/ControlsPanel';
 import { renderDebugLog } from './components/DebugLog';
+import { renderCodecPortrait } from './components/CodecPortrait';
+import { renderSignalBars } from './components/SignalBars';
+import { renderTranscriptPanel } from './components/TranscriptPanel';
+import { syncCodecSpritePortraits } from './lib/codecSprites';
 
 function mustQuery<T extends Element>(selector: string) {
   const element = document.querySelector<T>(selector);
@@ -20,78 +22,273 @@ function mustQuery<T extends Element>(selector: string) {
   return element;
 }
 
-function getCompanionSpeakerAndLine(state: AppState) {
-  const contact = CONTACTS[state.selectedContactIndex];
-  const canonicalLabel = getCanonicalTurnLabel(state.turnState);
+function escapeHtml(text: string) {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
-  if (state.screen === 'active') {
-    const activeEntry = state.activeTranscriptCursor >= 0 ? state.transcript[state.activeTranscriptCursor] : null;
-    if (activeEntry) {
-      const leftActive = activeEntry.role === 'contact';
-      const stateSuffix = state.turnState === 'error' ? 'Response issue' : canonicalLabel;
-      return {
-        speaker: activeEntry.speaker.toUpperCase(),
-        text: `${activeEntry.text} (${stateSuffix})`,
-        leftActive,
-        rightActive: !leftActive,
-      };
-    }
+type UserActionConfig = {
+  primary: { id: string; label: string };
+  secondary: { id: string; label: string };
+};
 
+function getUserActionConfig(state: AppState): UserActionConfig | null {
+  if (state.screen === 'contacts') {
     return {
-      speaker: 'ACTIVE',
-      text: 'Awaiting input. Waiting for confirmed user speech before response generation.',
-      leftActive: true,
-      rightActive: false,
+      primary: { id: 'startCallBtn', label: 'Start Call' },
+      secondary: { id: 'chooseContactBtn', label: 'Choose Contact' },
     };
   }
 
   if (state.screen === 'incoming') {
     return {
-      speaker: contact.name.toUpperCase(),
-      text: `${contact.name} requesting secure link on ${contact.frequency}.`,
-      leftActive: true,
-      rightActive: false,
+      primary: { id: 'answerBtn', label: 'Answer' },
+      secondary: { id: 'ignoreBtn', label: 'Ignore' },
     };
   }
 
   if (state.screen === 'listening') {
-    const partial = state.sttPartialTranscript.trim();
-    const noConfirmedSpeech = shouldShowNoConfirmedSpeech(state);
-    const lastCommitted = [...state.transcript].reverse().find((entry) => entry.text.trim().length > 0)?.text ?? 'none yet';
-    const listeningLabel = state.sttStatus === 'streaming' || state.micOpen ? 'Listening' : canonicalLabel;
-    const status = state.sttError ? 'STT issue' : listeningLabel;
-    const partialOrNoSpeech = partial || (noConfirmedSpeech ? 'No confirmed speech' : '...');
+    if (state.sttPartialTranscript.trim()) {
+      return {
+        primary: { id: 'continueBtn', label: 'Send' },
+        secondary: { id: 'retryBtn', label: 'Retry' },
+      };
+    }
+
     return {
-      speaker: 'LISTENING',
-      text: `State: ${status} | Partial: ${partialOrNoSpeech} | Last confirmed: ${lastCommitted} | Audio: mic ${state.micOpen ? 'open' : 'closed'} / ${state.audioCaptureStatus}`,
-      leftActive: true,
-      rightActive: false,
+      primary: { id: 'continueBtn', label: 'Reply' },
+      secondary: { id: 'endBtn', label: 'End' },
+    };
+  }
+
+  if (state.screen === 'active') {
+    return {
+      primary: { id: 'nextBtn', label: 'Next' },
+      secondary: { id: 'endBtn', label: 'End' },
     };
   }
 
   if (state.screen === 'ended') {
     return {
-      speaker: 'SYSTEM',
-      text: 'Connection ended. Use Redial or Back on G2.',
-      leftActive: false,
-      rightActive: false,
+      primary: { id: 'redialBtn', label: 'Redial' },
+      secondary: { id: 'backBtn', label: 'Back' },
     };
   }
 
-  if (state.screen === 'debug') {
+  return null;
+}
+
+type CodecDialogueSnapshot = {
+  stateLabel: string;
+  speakerLabel: string;
+  currentLine: string;
+  previousLine: string | null;
+  leftActive: boolean;
+  rightActive: boolean;
+  mouthOpen: boolean;
+  barLevel: number;
+};
+
+function shortenLine(text: string, maxChars = 92) {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function getCodecBarLevel(state: AppState) {
+  if (state.screen === 'incoming') {
+    return 8;
+  }
+
+  if (state.screen === 'ended') {
+    return 2;
+  }
+
+  if (state.screen === 'active') {
+    return 7;
+  }
+
+  if (state.screen === 'listening') {
+    return Math.max(3, Math.min(10, Math.round(state.listeningActivityLevel * 10)));
+  }
+
+  return state.started ? 5 : 2;
+}
+
+function getPreviousEntryLine(state: AppState, currentIndex: number) {
+  if (currentIndex <= 0 || currentIndex >= state.transcript.length) {
+    return null;
+  }
+
+  const previous = state.transcript[currentIndex - 1];
+  return previous ? shortenLine(`${previous.speaker.toUpperCase()}: ${previous.text}`, 76) : null;
+}
+
+function getCodecDialogueSnapshot(state: AppState): CodecDialogueSnapshot {
+  const contact = CONTACTS[state.selectedContactIndex];
+  const partial = state.sttPartialTranscript.trim();
+  const latestUser = [...state.transcript].reverse().find((entry) => entry.role === 'user') ?? null;
+  const latestContact = [...state.transcript].reverse().find((entry) => entry.role === 'contact' || entry.role === 'system') ?? null;
+  const activeEntry = state.activeTranscriptCursor >= 0 ? state.transcript[state.activeTranscriptCursor] ?? null : null;
+
+  if (state.screen === 'incoming') {
     return {
-      speaker: 'DEBUG',
-      text: `screen=${state.screenBeforeDebug}, input=${state.lastNormalizedInput ?? 'none'}, lifecycle=${state.deviceLifecycleState}`,
+      stateLabel: 'INCOMING CALL',
+      speakerLabel: contact.name.toUpperCase(),
+      currentLine: 'Secure incoming link request. Answer when ready.',
+      previousLine: `FREQUENCY ${contact.frequency}`,
+      leftActive: true,
+      rightActive: false,
+      mouthOpen: false,
+      barLevel: getCodecBarLevel(state),
+    };
+  }
+
+  if (state.screen === 'listening') {
+    if (partial) {
+      return {
+        stateLabel: 'SPEAK',
+        speakerLabel: 'YOU',
+        currentLine: partial,
+        previousLine: latestContact ? shortenLine(`${latestContact.speaker.toUpperCase()}: ${latestContact.text}`, 76) : null,
+        leftActive: false,
+        rightActive: true,
+        mouthOpen: true,
+        barLevel: getCodecBarLevel(state),
+      };
+    }
+
+    if (latestContact) {
+      return {
+        stateLabel: 'LISTEN',
+        speakerLabel: latestContact.speaker.toUpperCase(),
+        currentLine: latestContact.text,
+        previousLine: latestUser ? shortenLine(`${latestUser.speaker.toUpperCase()}: ${latestUser.text}`, 76) : null,
+        leftActive: true,
+        rightActive: false,
+        mouthOpen: false,
+        barLevel: getCodecBarLevel(state),
+      };
+    }
+
+    return {
+      stateLabel: 'YOUR TURN',
+      speakerLabel: 'YOU',
+      currentLine: shouldShowNoConfirmedSpeech(state)
+        ? 'No confirmed speech yet. Speak again when ready.'
+        : 'Your line is open. Speak when ready.',
+      previousLine: null,
+      leftActive: false,
+      rightActive: true,
+      mouthOpen: state.micOpen,
+      barLevel: getCodecBarLevel(state),
+    };
+  }
+
+  if (state.screen === 'active') {
+    const current = activeEntry ?? latestContact ?? latestUser;
+    const previousLine = activeEntry
+      ? getPreviousEntryLine(state, state.activeTranscriptCursor)
+      : latestContact && latestUser
+        ? shortenLine(`${latestUser.speaker.toUpperCase()}: ${latestUser.text}`, 76)
+        : null;
+
+    return {
+      stateLabel: state.responseError ? 'STAND BY' : getCanonicalTurnLabel(state.turnState).toUpperCase(),
+      speakerLabel: current?.speaker.toUpperCase() ?? contact.name.toUpperCase(),
+      currentLine: current?.text ?? 'Awaiting the next exchange.',
+      previousLine,
+      leftActive: current?.role === 'contact' || current?.role === 'system',
+      rightActive: current?.role === 'user',
+      mouthOpen: false,
+      barLevel: getCodecBarLevel(state),
+    };
+  }
+
+  if (state.screen === 'ended') {
+    const latestLine = state.transcript.length > 0
+      ? state.transcript[state.transcript.length - 1]
+      : null;
+
+    return {
+      stateLabel: 'CALL ENDED',
+      speakerLabel: 'SYSTEM',
+      currentLine: 'Codec link closed. Redial or return to directory.',
+      previousLine: latestLine ? shortenLine(`${latestLine.speaker.toUpperCase()}: ${latestLine.text}`, 76) : null,
       leftActive: false,
       rightActive: false,
+      mouthOpen: false,
+      barLevel: getCodecBarLevel(state),
     };
   }
 
   return {
-    speaker: 'STANDBY',
-    text: 'Select a contact to open an incoming codec request.',
+    stateLabel: state.started ? 'STAND BY' : 'SETUP',
+    speakerLabel: 'SYSTEM',
+    currentLine: state.started
+      ? 'Select a contact and start the codec link.'
+      : 'Start on Even to arm the mobile codec companion.',
+    previousLine: `${contact.name.toUpperCase()} TUNED ${contact.frequency}`,
     leftActive: false,
     rightActive: false,
+    mouthOpen: false,
+    barLevel: getCodecBarLevel(state),
+  };
+}
+
+function getRawStateSnapshot(state: AppState) {
+  return {
+    screen: state.screen,
+    screenBeforeDebug: state.screenBeforeDebug,
+    started: state.started,
+    evenNativeHostDetected: state.evenNativeHostDetected,
+    selectedContactIndex: state.selectedContactIndex,
+    contact: CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown',
+    lifecycle: state.deviceLifecycleState,
+    startup: {
+      status: state.evenStartupStatus,
+      blockedCode: state.evenStartupBlockedCode,
+      blockedMessage: state.evenStartupBlockedMessage,
+    },
+    input: {
+      normalized: state.lastNormalizedInput,
+      raw: state.lastRawEvent,
+    },
+    audio: {
+      micOpen: state.micOpen,
+      captureStatus: state.audioCaptureStatus,
+      frameCount: state.audioFrameCount,
+      bufferBytes: state.audioBufferByteLength,
+      bufferedMs: state.bufferedAudioDurationMs,
+      lastFrameAt: state.lastAudioFrameAt,
+      activityLevel: state.listeningActivityLevel,
+      error: state.audioError,
+    },
+    stt: {
+      status: state.sttStatus,
+      partialTranscript: state.sttPartialTranscript,
+      lastTranscriptAt: state.lastTranscriptAt,
+      error: state.sttError,
+      listeningSessionId: state.listeningSessionId,
+    },
+    turn: {
+      state: state.turnState,
+      lastHandledUserTranscriptId: state.lastHandledUserTranscriptId,
+      pendingResponseId: state.pendingResponseId,
+      responseError: state.responseError,
+      responseStatusTimestamp: state.responseStatusTimestamp,
+      activeTranscriptCursor: state.activeTranscriptCursor,
+      transcriptLength: state.transcript.length,
+    },
+    reliability: state.reliability,
+    imageSync: state.imageSync,
   };
 }
 
@@ -99,10 +296,11 @@ export class AppWeb {
   private readonly store: AppStore;
   private readonly startOnEven: (options?: { forceReset?: boolean }) => Promise<void>;
   private unsubscribe: (() => void) | null = null;
-  private speakingTimer: number | null = null;
-  private mouthOpen = false;
-  private barLevel = 0;
   private readonly lifecycleRaceHarness: LifecycleRaceHarness;
+  private contactPickerOpen = false;
+  private previousState: AppState | null = null;
+  private activeCodecGlitch: 'connect' | 'switch' | 'interrupt' | null = null;
+  private codecGlitchTimer: number | null = null;
 
   constructor(options: {
     store: AppStore;
@@ -123,12 +321,13 @@ export class AppWeb {
     app.innerHTML = '<div id="webRoot"></div>';
 
     this.unsubscribe = this.store.subscribe((state) => {
+      if (state.screen !== 'contacts') {
+        this.contactPickerOpen = false;
+      }
       this.render(state);
-      this.refreshSpeakingAnimation(state);
     });
 
     this.render(this.store.getState());
-    this.refreshSpeakingAnimation(this.store.getState());
     this.store.log('Web companion ready.');
   }
 
@@ -138,56 +337,266 @@ export class AppWeb {
       this.unsubscribe = null;
     }
 
-    if (this.speakingTimer !== null) {
-      window.clearInterval(this.speakingTimer);
-      this.speakingTimer = null;
+    if (this.codecGlitchTimer !== null) {
+      window.clearTimeout(this.codecGlitchTimer);
+      this.codecGlitchTimer = null;
     }
   }
 
   private render(state: AppState) {
-    const root = mustQuery<HTMLDivElement>('#webRoot');
-    const contact = CONTACTS[state.selectedContactIndex];
-    const line = getCompanionSpeakerAndLine(state);
+    const nextGlitch = this.getCodecGlitchEvent(this.previousState, state);
+    if (nextGlitch) {
+      this.triggerCodecGlitch(nextGlitch);
+    }
 
+    const root = mustQuery<HTMLDivElement>('#webRoot');
+
+    root.innerHTML = state.screen === 'debug'
+      ? this.renderDebugView(state)
+      : this.renderUserView(state);
+
+    syncCodecSpritePortraits(root);
+    this.bindControls(state);
+    this.bindLifecycleHarnessControls();
+    this.previousState = state;
+  }
+
+  private getCodecGlitchEvent(
+    previousState: AppState | null,
+    state: AppState,
+  ): 'connect' | 'switch' | 'interrupt' | null {
+    if (!previousState || state.screen === 'debug') {
+      return null;
+    }
+
+    if (previousState.selectedContactIndex !== state.selectedContactIndex) {
+      return 'switch';
+    }
+
+    if (previousState.responseError !== state.responseError && Boolean(state.responseError)) {
+      return 'interrupt';
+    }
+
+    if (previousState.screen !== 'incoming' && state.screen === 'incoming') {
+      return 'connect';
+    }
+
+    if ((previousState.screen === 'incoming' || previousState.screen === 'listening') && state.screen === 'active') {
+      return 'connect';
+    }
+
+    return null;
+  }
+
+  private triggerCodecGlitch(kind: 'connect' | 'switch' | 'interrupt') {
+    this.activeCodecGlitch = kind;
+
+    if (this.codecGlitchTimer !== null) {
+      window.clearTimeout(this.codecGlitchTimer);
+    }
+
+    const durationMs = kind === 'interrupt' ? 260 : 180;
+    this.codecGlitchTimer = window.setTimeout(() => {
+      this.activeCodecGlitch = null;
+      this.codecGlitchTimer = null;
+      this.render(this.store.getState());
+    }, durationMs);
+  }
+
+  private renderUserView(state: AppState) {
+    const contact = CONTACTS[state.selectedContactIndex];
+    const actions = getUserActionConfig(state);
+    const snapshot = getCodecDialogueSnapshot(state);
+    const pickerVisible = state.screen === 'contacts' && this.contactPickerOpen;
+    const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
+    const leftPortrait = renderCodecPortrait({
+      label: contact.name.toUpperCase(),
+      tag: contact.portraitTag,
+      characterId: contact.characterId,
+      active: snapshot.leftActive,
+      mouthOpen: snapshot.leftActive && snapshot.mouthOpen,
+    });
+    const rightPortrait = renderCodecPortrait({
+      label: RIGHT_CHARACTER.name.toUpperCase(),
+      tag: RIGHT_CHARACTER.portraitTag,
+      characterId: RIGHT_CHARACTER.characterId,
+      active: snapshot.rightActive,
+      mouthOpen: snapshot.rightActive && snapshot.mouthOpen,
+    });
+
+    return `
+      <div class="wrap">
+        <div class="companion-header">
+          <div>
+            <p class="eyebrow">Companion App</p>
+            <h1>What Even</h1>
+            <p class="subtitle">Codec-ready mobile companion with a clean call-first surface.</p>
+            ${state.evenNativeHostDetected
+              ? ''
+              : '<p class="host-warning">Glasses startup is only available inside the Even app native host.</p>'}
+          </div>
+          <div class="header-actions">
+            <button
+              id="startEvenBtn"
+              class="header-button ${state.evenNativeHostDetected ? '' : 'header-button-disabled'}"
+              title="${state.evenNativeHostDetected ? 'Start on Even' : 'Requires the Even app native host'}"
+            >${state.started ? 'Restart on Even' : 'Start on Even'}</button>
+            ${import.meta.env.DEV ? '<button id="toggleDebugBtn" class="debug-link">Debug</button>' : ''}
+          </div>
+        </div>
+
+        <section class="codec-stage">
+          <div class="codec-machine ${this.activeCodecGlitch ? `codec-glitch-${this.activeCodecGlitch}` : ''}">
+            <div class="codec-transmission-layers" aria-hidden="true">
+              <div class="codec-noise-layer"></div>
+              <div class="codec-crt-layer"></div>
+              <div class="scanlines"></div>
+              <div class="codec-glitch-layer"></div>
+            </div>
+
+            <div class="codec-machine-top">
+              <div class="codec-portrait-bay codec-portrait-bay-left">
+                ${leftPortrait}
+                <div class="codec-portrait-meta">
+                  <strong>${escapeHtml(contact.name)}</strong>
+                  <span>${escapeHtml(contact.code)} · ${escapeHtml(contact.frequency)}</span>
+                </div>
+              </div>
+
+              <div class="codec-center-core" aria-label="Codec signal module">
+                <div class="codec-center-cap">PTT</div>
+                <div class="signal-screen">
+                  <div class="signal-screen-grid">
+                    <div class="signal-bars">${renderSignalBars(snapshot.barLevel)}</div>
+                    <div class="frequency-stack">
+                      <span class="signal-label">TUNE</span>
+                      <strong>${escapeHtml(contact.frequency)}</strong>
+                      <span class="signal-subtitle">${escapeHtml(snapshot.stateLabel)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="codec-center-cap bottom">MEMORY</div>
+              </div>
+
+              <div class="codec-portrait-bay codec-portrait-bay-right">
+                ${rightPortrait}
+                <div class="codec-portrait-meta codec-portrait-meta-user">
+                  <strong>${escapeHtml(RIGHT_CHARACTER.name)}</strong>
+                  <span>Codec companion ready</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="codec-dialogue-deck">
+              <div class="codec-dialogue-head">
+                <span class="codec-state-pill">${escapeHtml(snapshot.stateLabel)}</span>
+                <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
+              </div>
+              <div class="codec-dialogue-speaker-row">
+                <span class="dialogue-speaker">${escapeHtml(snapshot.speakerLabel)}</span>
+                <span class="codec-line-index">${escapeHtml(transcriptTitle)}</span>
+              </div>
+              <div class="dialogue-current-line">${escapeHtml(snapshot.currentLine)}</div>
+              ${snapshot.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(snapshot.previousLine)}</div>` : ''}
+            </div>
+
+            <div class="codec-transcript-deck">
+              <div class="codec-transcript-head">
+                <div>
+                  <div class="section-label">Transcript</div>
+                  <h2>${transcriptTitle}</h2>
+                </div>
+                <p class="recent-exchange-copy">Chronological transcript stays available here while the active exchange stays above.</p>
+              </div>
+
+              <div class="transcript-history codec-transcript-history">
+                ${renderTranscriptPanel(state.transcript, { partialText: state.sttPartialTranscript })}
+              </div>
+            </div>
+
+            ${actions ? `
+              <div class="codec-action-row">
+                <button id="${actions.primary.id}" class="primary-action codec-action-button">${actions.primary.label}</button>
+                <button id="${actions.secondary.id}" class="secondary-action codec-action-button">${actions.secondary.label}</button>
+              </div>
+            ` : ''}
+          </div>
+        </section>
+
+        ${pickerVisible ? `
+          <div class="picker-sheet-backdrop" id="contactPickerDismissBtn"></div>
+          <div class="picker-sheet">
+            <div class="picker-sheet-header">
+              <div>
+                <div class="section-label">Choose Contact</div>
+                <h2>Codec Directory</h2>
+              </div>
+              <button id="contactPickerDismissBtnSecondary" class="picker-close-button">Close</button>
+            </div>
+            <label class="picker-card" for="contactPicker">
+              <span class="picker-help">Tune the companion to the right contact before starting the link.</span>
+              <select id="contactPicker" class="contact-picker">
+                ${CONTACTS.map((item, index) => `
+                  <option value="${index}" ${index === state.selectedContactIndex ? 'selected' : ''}>
+                    ${escapeHtml(item.name)} (${escapeHtml(item.frequency)})
+                  </option>
+                `).join('')}
+              </select>
+            </label>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  private renderDebugView(state: AppState) {
     const latestUserFinal = [...state.transcript].reverse().find((entry) => entry.role === 'user') ?? null;
     const latestGenerated = [...state.transcript].reverse().find((entry) => entry.role === 'contact' || entry.role === 'system') ?? null;
 
-    root.innerHTML = `
+    return `
       <div class="wrap">
-        <h1>What Even</h1>
-        <p class="subtitle">G2-first codec app with companion web UI</p>
-
-        ${renderControlsPanel(state, import.meta.env.DEV)}
+        <div class="companion-header">
+          <div>
+            <p class="eyebrow">Debug Mode</p>
+            <h1>What Even</h1>
+            <p class="subtitle">Diagnostics, lifecycle harness, logs, and raw state live here.</p>
+            ${state.simulatorSessionDetected
+              ? '<div class="simulator-session-badge">SIMULATOR SESSION DETECTED — this is not the real glasses.</div>'
+              : ''}
+            ${state.evenNativeHostDetected
+              ? ''
+              : '<div class="host-warning-banner">Even native host missing. Glasses startup will be skipped in this browser context.</div>'}
+          </div>
+          <div class="header-actions">
+            <button id="toggleDebugBtn" class="primary-action debug-exit">Exit Debug</button>
+            <button
+              id="startEvenBtn"
+              class="header-button ${state.evenNativeHostDetected ? '' : 'header-button-disabled'}"
+              title="${state.evenNativeHostDetected ? 'Start on Even' : 'Requires the Even app native host'}"
+            >${state.started ? 'Restart on Even' : 'Start on Even'}</button>
+            <button id="copyLogBtn" class="header-button">Copy Log</button>
+            <button id="clearLogBtn" class="header-button">Clear Log</button>
+          </div>
+        </div>
 
         ${this.renderLifecycleHarnessPanel()}
-
-        <div id="codecMount">
-          ${renderCodecShell(state, {
-      leftLabel: contact.name.toUpperCase(),
-      leftTag: contact.portraitTag,
-      leftActive: line.leftActive,
-      rightActive: line.rightActive,
-      mouthOpen: this.mouthOpen,
-      frequency: contact.frequency,
-      speakerLabel: line.speaker,
-      dialogueText: line.text,
-      barLevel: this.barLevel,
-    })}
-        </div>
 
         <div class="debug-card">
           <div class="debug-section">
             <div class="debug-heading">Session</div>
             <div class="debug-grid">
               <div>Screen: <strong>${state.screen}</strong></div>
+              <div>Return Screen: <strong>${state.screenBeforeDebug}</strong></div>
               <div>Lifecycle: <strong>${state.deviceLifecycleState}</strong></div>
               <div>Even Startup: <strong>${state.evenStartupStatus}</strong></div>
               <div>Startup Blocked: <strong>${state.evenStartupBlockedCode ?? 'none'}</strong></div>
+              <div>Startup Message: <strong>${state.evenStartupBlockedMessage ?? 'none'}</strong></div>
+              <div>Native Host: <strong>${state.evenNativeHostDetected ? 'detected' : 'missing'}</strong></div>
+              <div>Simulator Session: <strong>${state.simulatorSessionDetected ? 'detected' : 'not detected'}</strong></div>
               <div>Image Sync: <strong>${state.imageSync.lastResult}</strong></div>
               <div>Last Input: <strong>${state.lastNormalizedInput ?? 'none'}</strong></div>
               <div>Raw Source: <strong>${state.lastRawEvent?.source ?? 'none'}</strong></div>
               <div>Raw Type: <strong>${state.lastRawEvent?.rawEventTypeName ?? 'none'}</strong></div>
-              <div>Startup Message: <strong>${state.evenStartupBlockedMessage ?? 'none'}</strong></div>
             </div>
           </div>
           <div class="debug-section">
@@ -244,12 +653,14 @@ export class AppWeb {
           </div>
         </div>
 
+        <div class="debug-section raw-state-card">
+          <div class="debug-heading">Raw State</div>
+          <pre class="state-dump">${escapeHtml(JSON.stringify(getRawStateSnapshot(state), null, 2))}</pre>
+        </div>
+
         ${renderDebugLog(state.logs)}
       </div>
     `;
-
-    this.bindControls(state);
-    this.bindLifecycleHarnessControls();
   }
 
   private renderLifecycleHarnessPanel() {
@@ -322,55 +733,12 @@ export class AppWeb {
   }
 
   private bindControls(state: AppState) {
-    mustQuery<HTMLButtonElement>('#startEvenBtn').onclick = () => {
-      void this.startOnEven();
-    };
-
-    mustQuery<HTMLButtonElement>('#prevContactBtn').onclick = () => {
-      if (this.store.getState().screen === 'contacts') {
-        this.store.moveContactSelection(-1);
-      }
-    };
-
-    mustQuery<HTMLButtonElement>('#nextContactBtn').onclick = () => {
-      if (this.store.getState().screen === 'contacts') {
-        this.store.moveContactSelection(1);
-      }
-    };
-
-    mustQuery<HTMLButtonElement>('#openIncomingBtn').onclick = () => {
-      if (this.store.getState().screen === 'contacts') {
-        this.store.goToIncomingForSelectedContact();
-      }
-    };
-
-    mustQuery<HTMLButtonElement>('#listeningContinueBtn').onclick = () => {
-      if (this.store.getState().screen === 'listening') {
-        this.store.setListeningActionIndex(0);
-        this.store.continueListeningAndStartActiveCall();
-      }
-    };
-
-    mustQuery<HTMLButtonElement>('#listeningEndBtn').onclick = () => {
-      if (this.store.getState().screen === 'listening') {
-        this.store.setListeningActionIndex(1);
-        this.store.endListening();
-      }
-    };
-
-    mustQuery<HTMLButtonElement>('#activeNextBtn').onclick = () => {
-      if (this.store.getState().screen === 'active') {
-        this.store.setActiveActionIndex(0);
-        this.store.advanceDialogueOrEnd();
-      }
-    };
-
-    mustQuery<HTMLButtonElement>('#activeEndBtn').onclick = () => {
-      if (this.store.getState().screen === 'active') {
-        this.store.setActiveActionIndex(1);
-        this.store.endCall();
-      }
-    };
+    const startEvenBtn = document.querySelector<HTMLButtonElement>('#startEvenBtn');
+    if (startEvenBtn) {
+      startEvenBtn.onclick = () => {
+        void this.startOnEven();
+      };
+    }
 
     const toggleDebugBtn = document.querySelector<HTMLButtonElement>('#toggleDebugBtn');
     if (toggleDebugBtn) {
@@ -383,16 +751,154 @@ export class AppWeb {
       };
     }
 
-    mustQuery<HTMLButtonElement>('#copyLogBtn').onclick = () => {
-      void this.copyLog();
-    };
+    const contactPicker = document.querySelector<HTMLSelectElement>('#contactPicker');
+    if (contactPicker) {
+      contactPicker.onchange = () => {
+        this.store.setSelectedContactIndex(Number(contactPicker.value));
+        this.contactPickerOpen = false;
+        this.render(this.store.getState());
+      };
+    }
 
-    mustQuery<HTMLButtonElement>('#clearLogBtn').onclick = () => {
-      this.store.clearLogs();
-    };
+    const contactPickerDismissBtn = document.querySelector<HTMLButtonElement>('#contactPickerDismissBtnSecondary');
+    if (contactPickerDismissBtn) {
+      contactPickerDismissBtn.onclick = () => {
+        this.contactPickerOpen = false;
+        this.render(this.store.getState());
+      };
+    }
 
-    const logEl = mustQuery<HTMLPreElement>('#log');
-    logEl.scrollTop = logEl.scrollHeight;
+    const contactPickerBackdrop = document.querySelector<HTMLDivElement>('#contactPickerDismissBtn');
+    if (contactPickerBackdrop) {
+      contactPickerBackdrop.onclick = () => {
+        this.contactPickerOpen = false;
+        this.render(this.store.getState());
+      };
+    }
+
+    const chooseContactBtn = document.querySelector<HTMLButtonElement>('#chooseContactBtn');
+    if (chooseContactBtn) {
+      chooseContactBtn.onclick = () => {
+        this.contactPickerOpen = !this.contactPickerOpen;
+        this.render(this.store.getState());
+      };
+    }
+
+    const startCallBtn = document.querySelector<HTMLButtonElement>('#startCallBtn');
+    if (startCallBtn) {
+      startCallBtn.onclick = () => {
+        if (this.store.getState().screen === 'contacts') {
+          this.store.goToIncomingForSelectedContact();
+        }
+      };
+    }
+
+    const answerBtn = document.querySelector<HTMLButtonElement>('#answerBtn');
+    if (answerBtn) {
+      answerBtn.onclick = () => {
+        if (this.store.getState().screen === 'incoming') {
+          this.store.setIncomingActionIndex(0);
+          this.store.answerIncomingAndStartListening();
+        }
+      };
+    }
+
+    const ignoreBtn = document.querySelector<HTMLButtonElement>('#ignoreBtn');
+    if (ignoreBtn) {
+      ignoreBtn.onclick = () => {
+        if (this.store.getState().screen === 'incoming') {
+          this.store.setIncomingActionIndex(1);
+          this.store.ignoreIncoming();
+        }
+      };
+    }
+
+    const continueBtn = document.querySelector<HTMLButtonElement>('#continueBtn');
+    if (continueBtn) {
+      continueBtn.onclick = () => {
+        if (this.store.getState().screen === 'listening') {
+          this.store.setListeningActionIndex(0);
+          this.store.continueListeningAndStartActiveCall();
+        }
+      };
+    }
+
+    const retryBtn = document.querySelector<HTMLButtonElement>('#retryBtn');
+    if (retryBtn) {
+      retryBtn.onclick = () => {
+        const currentState = this.store.getState();
+        if (currentState.screen === 'listening' && currentState.sttPartialTranscript.trim()) {
+          this.store.setListeningActionIndex(1);
+          this.store.clearSttPartialTranscript();
+        }
+      };
+    }
+
+    const nextBtn = document.querySelector<HTMLButtonElement>('#nextBtn');
+    if (nextBtn) {
+      nextBtn.onclick = () => {
+        if (this.store.getState().screen === 'active') {
+          this.store.setActiveActionIndex(0);
+          this.store.advanceDialogueOrEnd();
+        }
+      };
+    }
+
+    const endBtn = document.querySelector<HTMLButtonElement>('#endBtn');
+    if (endBtn) {
+      endBtn.onclick = () => {
+        const currentState = this.store.getState();
+        if (currentState.screen === 'listening') {
+          this.store.setListeningActionIndex(1);
+          this.store.endListening();
+          return;
+        }
+
+        if (currentState.screen === 'active') {
+          this.store.setActiveActionIndex(1);
+          this.store.endCall();
+        }
+      };
+    }
+
+    const redialBtn = document.querySelector<HTMLButtonElement>('#redialBtn');
+    if (redialBtn) {
+      redialBtn.onclick = () => {
+        if (this.store.getState().screen === 'ended') {
+          this.store.setEndedActionIndex(0);
+          this.store.redialCurrentContact();
+        }
+      };
+    }
+
+    const backBtn = document.querySelector<HTMLButtonElement>('#backBtn');
+    if (backBtn) {
+      backBtn.onclick = () => {
+        if (this.store.getState().screen === 'ended') {
+          this.store.setEndedActionIndex(1);
+          this.store.backToContacts();
+        }
+      };
+    }
+
+    const copyLogBtn = document.querySelector<HTMLButtonElement>('#copyLogBtn');
+    if (copyLogBtn) {
+      copyLogBtn.onclick = () => {
+        void this.copyLog();
+      };
+    }
+
+    const clearLogBtn = document.querySelector<HTMLButtonElement>('#clearLogBtn');
+    if (clearLogBtn) {
+      clearLogBtn.onclick = () => {
+        this.store.clearLogs();
+      };
+    }
+
+    const logEl = document.querySelector<HTMLPreElement>('#log');
+    if (logEl) {
+      logEl.scrollTop = logEl.scrollHeight;
+    }
 
     if (state.logs.length === 0) {
       this.store.log('Web controls bound.');
@@ -452,47 +958,5 @@ export class AppWeb {
         this.store.log(`Copy failed: ${String(error)}`);
       }
     }
-  }
-
-  private refreshSpeakingAnimation(state: AppState) {
-    if (state.screen === 'listening') {
-      if (this.speakingTimer !== null) {
-        window.clearInterval(this.speakingTimer);
-        this.speakingTimer = null;
-      }
-
-      this.mouthOpen = false;
-      this.barLevel = Math.max(0, Math.min(10, Math.round(state.listeningActivityLevel * 10)));
-      return;
-    }
-
-    const active = state.screen === 'active' && state.activeTranscriptCursor >= 0;
-
-    if (!active) {
-      if (this.speakingTimer !== null) {
-        window.clearInterval(this.speakingTimer);
-        this.speakingTimer = null;
-      }
-
-      this.mouthOpen = false;
-      this.barLevel = 0;
-      return;
-    }
-
-    const activeEntry = state.transcript[state.activeTranscriptCursor];
-    if (!activeEntry) {
-      return;
-    }
-
-    if (this.speakingTimer !== null) {
-      return;
-    }
-
-    const levels = [2, 4, 7, 5, 8, 3, 6];
-    this.speakingTimer = window.setInterval(() => {
-      this.mouthOpen = activeEntry.role !== 'system' ? !this.mouthOpen : false;
-      this.barLevel = levels[Math.floor(Math.random() * levels.length)] ?? 0;
-      this.render(this.store.getState());
-    }, 140);
   }
 }

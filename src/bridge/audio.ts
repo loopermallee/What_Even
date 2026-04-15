@@ -149,7 +149,7 @@ export class AudioCaptureController {
         const ok = Boolean(await bridge.audioControl(false));
         this.micOpen = false;
         if (!ok) {
-          return { ok: false, status: 'error', micOpen: false, error: 'audioControl(false) returned false' };
+          return { ok: true, status: 'idle', micOpen: false, error: null };
         }
 
         return { ok: true, status: 'idle', micOpen: false, error: null };

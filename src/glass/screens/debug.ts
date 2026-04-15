@@ -6,6 +6,7 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
 
   return {
     screenLabel: 'DEBUG',
+    statusLabel: 'DEV ONLY',
     portraitAsset: 'portrait-snake',
     dialogue: wrapText([
       `SCREEN ${state.screenBeforeDebug.toUpperCase()}`,
@@ -15,5 +16,7 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
     ].join('\n'), 27, 4),
     actions: ['Exit Debug'],
     selectedActionIndex: 0,
+    mode: 'compact',
+    liveLineKind: 'none',
   };
 }

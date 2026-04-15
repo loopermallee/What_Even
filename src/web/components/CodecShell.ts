@@ -7,6 +7,7 @@ import { renderTranscriptPanel } from './TranscriptPanel';
 export function renderCodecShell(state: AppState, options: {
   leftLabel: string;
   leftTag: string;
+  leftCharacterId?: 'snake' | 'otacon' | 'meryl' | 'colonel';
   rightActive: boolean;
   leftActive: boolean;
   mouthOpen: boolean;
@@ -19,41 +20,55 @@ export function renderCodecShell(state: AppState, options: {
 
   return `
     <div class="codec-shell">
-      <div class="scanlines"></div>
+      <div class="codec-transmission-layers" aria-hidden="true">
+        <div class="codec-noise-layer"></div>
+        <div class="codec-crt-layer"></div>
+        <div class="scanlines"></div>
+        <div class="codec-glitch-layer"></div>
+      </div>
 
-      <div class="codec-top">
+      <div class="codec-machine-top">
         ${renderCodecPortrait({
     label: options.leftLabel,
     tag: options.leftTag,
+    characterId: options.leftCharacterId,
     active: options.leftActive,
     mouthOpen: options.leftActive && options.mouthOpen,
   })}
 
-        <div class="codec-center">
-          <div class="codec-tag top">PTT</div>
+        <div class="codec-center-core">
+          <div class="codec-center-cap">PTT</div>
 
           <div class="signal-screen">
-            <div class="signal-bars">${barsHtml}</div>
-            <div class="frequency">${options.frequency}</div>
+            <div class="signal-screen-grid">
+              <div class="signal-bars">${barsHtml}</div>
+              <div class="frequency-stack">
+                <span class="signal-label">TUNE</span>
+                <strong>${options.frequency}</strong>
+              </div>
+            </div>
           </div>
 
-          <div class="codec-tag bottom">MEMORY</div>
+          <div class="codec-center-cap bottom">MEMORY</div>
         </div>
 
         ${renderCodecPortrait({
     label: RIGHT_CHARACTER.name.toUpperCase(),
     tag: RIGHT_CHARACTER.portraitTag,
+    characterId: RIGHT_CHARACTER.characterId,
     active: options.rightActive,
     mouthOpen: options.rightActive && options.mouthOpen,
   })}
       </div>
 
-      <div class="dialogue-box">
-        <div class="speaker-name">${options.speakerLabel}</div>
-        <div class="dialogue-text">${options.dialogueText}</div>
+      <div class="codec-dialogue-deck">
+        <div class="codec-dialogue-speaker-row">
+          <div class="dialogue-speaker">${options.speakerLabel}</div>
+        </div>
+        <div class="dialogue-current-line">${options.dialogueText}</div>
       </div>
 
-      <div class="transcript-panel">
+      <div class="transcript-history codec-transcript-history">
         ${renderTranscriptPanel(state.transcript, { partialText: state.sttPartialTranscript })}
       </div>
     </div>

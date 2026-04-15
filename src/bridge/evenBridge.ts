@@ -11,8 +11,9 @@ import { StartupLifecycleManager } from './startupLifecycle';
 import { AudioCaptureController } from './audio';
 import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
 import { createAppError, isAppError, redactSensitiveText, toErrorMessage, type AppError } from '../app/errors';
-import type { ErrorCategory, EvenStartupBlockedCode } from '../app/types';
+import type { ErrorCategory, EvenStartupBlockedCode, NormalizedInput, RawEventDebugInfo } from '../app/types';
 import { requestSttBrokerAuth } from './sttAuth';
+import { hasEvenNativeHost } from './nativeHost';
 
 function normalizedInputToRawInteraction(input: 'UP' | 'DOWN' | 'TAP' | 'DOUBLE_TAP') {
   if (input === 'UP') {
@@ -46,6 +47,56 @@ function rawInteractionToNormalized(interaction: RawInteractionType): 'UP' | 'DO
   return 'TAP';
 }
 
+function safeSerialize(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+function isSimulatorIdentityUser(user: unknown) {
+  if (!user || typeof user !== 'object') {
+    return false;
+  }
+
+  const candidate = user as { name?: unknown; uid?: unknown };
+  return candidate.name === 'Simulator' || String(candidate.uid ?? '') === '1337';
+}
+
+function detectSimulatorSession(user: unknown, device: unknown) {
+  const userInfo = user && typeof user === 'object' ? user as { name?: unknown; uid?: unknown } : null;
+  const deviceInfo = device && typeof device === 'object'
+    ? device as { sn?: unknown; status?: { connectType?: unknown } | null }
+    : null;
+
+  const userNameIsSimulator = userInfo?.name === 'Simulator';
+  const userUidIsSimulator = String(userInfo?.uid ?? '') === '1337';
+  const deviceSnIsSimulator = deviceInfo?.sn === 'S2001234567890';
+  const connectTypeIsConnected = deviceInfo?.status?.connectType === 'connected';
+
+  const detected =
+    deviceSnIsSimulator
+    || (userNameIsSimulator && userUidIsSimulator)
+    || (connectTypeIsConnected && isSimulatorIdentityUser(user));
+
+  const reasons: string[] = [];
+  if (userNameIsSimulator) {
+    reasons.push('user.name=Simulator');
+  }
+  if (userUidIsSimulator) {
+    reasons.push('user.uid=1337');
+  }
+  if (deviceSnIsSimulator) {
+    reasons.push('device.sn=S2001234567890');
+  }
+  if (connectTypeIsConnected && reasons.length > 0) {
+    reasons.push('device.status.connectType=connected');
+  }
+
+  return { detected, reasons };
+}
+
 type CleanupReason =
   | 'continue'
   | 'end'
@@ -66,17 +117,22 @@ export class EvenBridgeApp {
   private readonly store: AppStore;
   private readonly glasses: AppGlasses;
   private bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null;
+  private unsubscribeLaunchSource: (() => void) | null = null;
+  private unsubscribeDeviceStatusChanged: (() => void) | null = null;
   private unsubscribeEvenHubEvents: (() => void) | null = null;
   private feedbackManager: InteractionFeedbackManager | null = null;
   private normalizer = new EvenInputNormalizer();
   private imageQueue: SerializedImageQueue | null = null;
   private startupLifecycle: StartupLifecycleManager | null = null;
   private glassesSyncTimer: number | null = null;
+  private cursorBlinkTimer: number | null = null;
+  private draftVisibilityTimer: number | null = null;
   private syncInFlight = false;
   private syncQueuedWhileInFlight = false;
   private syncNeedsForcedImages = false;
   private lastRenderedPortraitAsset: string | null = null;
   private lastSyncedTextContent = '';
+  private lastRebuildSignature = '';
   private lastSyncSignature = '';
   private unsubscribeStore: (() => void) | null = null;
   private previousObservedState: { screen: string; selectedContactIndex: number; started: boolean } | null = null;
@@ -86,6 +142,9 @@ export class EvenBridgeApp {
   private sttSession: StreamingSttSession | null = null;
   private activeSttListeningSessionId: number | null = null;
   private activeSttSessionToken: number | null = null;
+  private sttStartInFlightListeningSessionId: number | null = null;
+  private sttStartInFlightAttemptToken: number | null = null;
+  private nextSttStartAttemptToken = 1;
   private nextSttSessionToken = 1;
   private sttReconnectAttemptedSessionId: number | null = null;
   private sttRetryTimer: number | null = null;
@@ -95,6 +154,7 @@ export class EvenBridgeApp {
   private pendingPartialSessionToken: number | null = null;
   private pendingPartialListeningSessionId: number | null = null;
   private pendingPartialSessionRef: StreamingSttSession | null = null;
+  private sttStopInFlight: Promise<void> | null = null;
   private lastAudioMetricPushAt = 0;
   private lastAudioDropLogAt = 0;
   private lastStaleNote: { key: string; at: number } | null = null;
@@ -105,6 +165,21 @@ export class EvenBridgeApp {
   private readonly audioDropLogThrottleMs = 1500;
   private readonly sttPartialFlushMs = 70;
   private readonly staleLogCooldownMs = 800;
+  private readonly simulatorUnknownTapSuppressMs = 150;
+  private readonly deviceInfoRetryDelayMs = 250;
+  private readonly deviceInfoRetryAttempts = 4;
+  private readonly extendedDeviceObservationMs = 4_000;
+  private readonly extendedDeviceObservationPollMs = 500;
+  private suppressSimulatorUnknownTapUntil = 0;
+  private bridgeReadyAt: number | null = null;
+  private sawLaunchSourceCallback = false;
+  private latestLaunchSource: string | null = null;
+  private firstLaunchSourceCallbackAt: number | null = null;
+  private sawDeviceStatusCallback = false;
+  private firstDeviceStatusCallbackAt: number | null = null;
+  private latestDeviceStatusSnapshot: unknown = null;
+  private latestDeviceStatusConnectType: string | null = null;
+  private firstNonNullDeviceInfoAt: number | null = null;
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -112,13 +187,39 @@ export class EvenBridgeApp {
   }
 
   async startOnEven(options?: { forceReset?: boolean }) {
+    const nativeHostDetected = hasEvenNativeHost();
+    this.store.setEvenNativeHostDetected(nativeHostDetected);
+    this.store.log(`Debug: native host detected = ${nativeHostDetected}`);
+    if (!nativeHostDetected) {
+      this.store.setStarted(false);
+      this.store.log('Even native host not detected; skipping glasses startup.');
+      this.store.log('Bridge/session diagnostics skipped because the Even native host is missing.');
+      this.store.setEvenStartupBlocked(
+        'native_host_missing',
+        'Glasses startup only works inside the Even app native host.'
+      );
+      return;
+    }
+
     this.store.log('Waiting for Even bridge...');
     this.store.setEvenStartupStarting();
     this.store.setStarted(false);
 
     try {
       this.bridge = await waitForEvenAppBridge();
+      this.bridgeReadyAt = Date.now();
+      this.sawLaunchSourceCallback = false;
+      this.latestLaunchSource = null;
+      this.firstLaunchSourceCallbackAt = null;
+      this.sawDeviceStatusCallback = false;
+      this.firstDeviceStatusCallbackAt = null;
+      this.latestDeviceStatusSnapshot = null;
+      this.latestDeviceStatusConnectType = null;
+      this.firstNonNullDeviceInfoAt = null;
       this.store.log('Bridge connected.');
+      this.store.log('Debug: bridge connected = true');
+      this.attachLaunchSourceDiagnostics();
+      this.attachDeviceStatusDiagnostics();
 
       const forceReset = Boolean(options?.forceReset && import.meta.env.DEV);
       this.store.log(
@@ -143,8 +244,11 @@ export class EvenBridgeApp {
         log: (message) => this.store.log(message),
       });
 
-      const user = await this.bridge.getUserInfo().catch(() => null);
-      const device = await this.bridge.getDeviceInfo().catch(() => null);
+      const user = await this.bridge.getUserInfo().catch((error) => {
+        this.store.log(`User info request failed: ${String(error)}`);
+        return null;
+      });
+      this.store.log(`Debug: user info result = ${safeSerialize(user)}`);
 
       if (user) {
         this.store.log(`User: ${user.name || '(blank name)'}`);
@@ -152,13 +256,18 @@ export class EvenBridgeApp {
         this.store.log('User info unavailable.');
       }
 
-      if (device) {
-        this.store.log(`Device model: ${String(device.model)}`);
-        this.store.log(`Device SN: ${device.sn}`);
-        this.store.log(`Connect type: ${device.status?.connectType ?? 'unknown'}`);
-      } else {
-        this.store.log('Device info is null.');
+      const userOnlySimulatorDiagnostic = detectSimulatorSession(user, null);
+      this.store.setSimulatorSessionDetected(userOnlySimulatorDiagnostic.detected);
+      if (userOnlySimulatorDiagnostic.detected) {
+        this.store.log('SIMULATOR SESSION DETECTED — this is not the real glasses.');
+        this.store.log(`Simulator diagnostic signatures: ${userOnlySimulatorDiagnostic.reasons.join(', ')}`);
       }
+
+      // Keep session diagnostics running, but don't block the first on-glasses render on device info timing.
+      void this.observeDeviceSessionDuringStartup(user, userOnlySimulatorDiagnostic.detected);
+
+      this.logSessionAttachSummary('startup-ready');
+      this.store.log('Device/session diagnostics continuing in background; startup page render will proceed without a pre-start device gate.');
 
       const startupReady = await this.startupLifecycle.ensureStartupPageLifecycle({
         forceReset,
@@ -166,6 +275,7 @@ export class EvenBridgeApp {
       });
 
       if (!startupReady.ok) {
+        this.store.log('Startup lifecycle failed before rebuild; rebuild/fallback skipped.');
         this.markStartupBlocked(
           'startup_lifecycle_failed',
           'Startup lifecycle create/reset failed before rebuild.'
@@ -205,6 +315,7 @@ export class EvenBridgeApp {
       this.setupStoreAudioLifecycle();
       this.store.setEvenStartupReady();
       this.store.setStarted(true);
+      this.lastRebuildSignature = this.glasses.getStructuralRebuildSignature();
       this.store.log('Startup lifecycle complete: rebuild flow ready.');
       this.syncNeedsForcedImages = true;
       this.queueSyncFromState();
@@ -213,6 +324,34 @@ export class EvenBridgeApp {
       this.store.log(`Start error: ${errorMessage}`);
       this.markStartupBlocked('startup_exception', errorMessage);
     }
+  }
+
+  private async observeDeviceSessionDuringStartup(user: unknown, userOnlySimulatorDetected: boolean) {
+    const device = await this.waitForActiveDeviceSession();
+    if (!device) {
+      this.logSessionAttachSummary('startup-ready');
+      this.store.log('Device session diagnostics completed with no active device info; startup was allowed to proceed for first-render testing.');
+      return;
+    }
+
+    this.store.log(`Device model: ${String(device.model)}`);
+    this.store.log(`Device SN: ${device.sn}`);
+    this.store.log(`Connect type: ${device.status?.connectType ?? 'unknown'}`);
+    this.store.log(`Debug: device info result = ${safeSerialize(device)}`);
+    if (device.status?.connectType !== 'connected') {
+      this.store.log(`Debug: device session is present with connectType=${device.status?.connectType ?? 'unknown'}.`);
+    }
+
+    const simulatorDiagnostic = detectSimulatorSession(user, device);
+    this.store.setSimulatorSessionDetected(simulatorDiagnostic.detected);
+    if (simulatorDiagnostic.detected && !userOnlySimulatorDetected) {
+      this.store.log('SIMULATOR SESSION DETECTED — this is not the real glasses.');
+    }
+    if (simulatorDiagnostic.detected) {
+      this.store.log(`Simulator diagnostic signatures: ${simulatorDiagnostic.reasons.join(', ')}`);
+    }
+
+    this.logSessionAttachSummary('startup-ready');
   }
 
   private markStartupBlocked(code: EvenStartupBlockedCode, message: string) {
@@ -266,7 +405,7 @@ export class EvenBridgeApp {
     await this.startupLifecycle.waitAfterShutdown();
 
     const startupCreateResult = await this.startupLifecycle.attemptStartupCreate(
-      'startup-stale-recovery:minimal-single-text',
+      'startup-stale-recovery:minimal-two-text',
       this.glasses.buildMinimalStartContainer()
     );
     if (startupCreateResult !== 0) {
@@ -277,9 +416,116 @@ export class EvenBridgeApp {
     return this.runStartupRebuildFlow('startup-recovery');
   }
 
+  private async waitForActiveDeviceSession() {
+    if (!this.bridge) {
+      return null;
+    }
+
+    for (let attempt = 1; attempt <= this.deviceInfoRetryAttempts; attempt += 1) {
+      const device = await this.bridge.getDeviceInfo().catch((error) => {
+        this.store.log(`Device info request failed on attempt ${attempt}: ${String(error)}`);
+        return null;
+      });
+      this.store.log(`Debug: device info result (attempt ${attempt}/${this.deviceInfoRetryAttempts}) = ${safeSerialize(device)}`);
+
+      if (device) {
+        this.noteFirstNonNullDeviceInfo(`initial-gate-attempt-${attempt}`);
+        return device;
+      }
+
+      if (attempt < this.deviceInfoRetryAttempts) {
+        this.store.log(
+          `Bridge connected but no active device session. Retrying getDeviceInfo() in ${this.deviceInfoRetryDelayMs}ms (${attempt}/${this.deviceInfoRetryAttempts - 1}).`
+        );
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, this.deviceInfoRetryDelayMs);
+        });
+      }
+    }
+
+    this.store.log(
+      `Device session gate summary before block: statusCallbackSeen=${this.sawDeviceStatusCallback ? 'yes' : 'no'}, latestConnectType=${this.latestDeviceStatusConnectType ?? 'unknown'}, latestStatusSnapshot=${safeSerialize(this.latestDeviceStatusSnapshot)}`
+    );
+    await this.runExtendedDeviceObservation();
+    this.store.log('Bridge connected but no active device session. Diagnostics complete; startup is allowed to continue.');
+    return null;
+  }
+
+  private attachLaunchSourceDiagnostics() {
+    if (!this.bridge) {
+      return;
+    }
+
+    if (this.unsubscribeLaunchSource) {
+      this.unsubscribeLaunchSource();
+      this.unsubscribeLaunchSource = null;
+    }
+
+    try {
+      this.unsubscribeLaunchSource = this.bridge.onLaunchSource((source) => {
+        const normalizedSource = typeof source === 'string' ? source : String(source);
+        const isFirstCallback = !this.sawLaunchSourceCallback;
+        this.sawLaunchSourceCallback = true;
+        this.latestLaunchSource = normalizedSource;
+        if (this.firstLaunchSourceCallbackAt === null) {
+          this.firstLaunchSourceCallbackAt = Date.now();
+        }
+        this.store.log(
+          `Launch source callback${isFirstCallback ? ' (first)' : ''}: source=${normalizedSource}, elapsedSinceBridge=${this.formatElapsedFromBridge(this.firstLaunchSourceCallbackAt)}`
+        );
+      });
+      this.store.log('Launch source diagnostics listener attached.');
+    } catch (error) {
+      this.store.log(`Launch source diagnostics listener attach failed: ${String(error)}`);
+      this.unsubscribeLaunchSource = null;
+    }
+  }
+
+  private attachDeviceStatusDiagnostics() {
+    if (!this.bridge) {
+      return;
+    }
+
+    if (this.unsubscribeDeviceStatusChanged) {
+      this.unsubscribeDeviceStatusChanged();
+      this.unsubscribeDeviceStatusChanged = null;
+    }
+
+    try {
+      this.unsubscribeDeviceStatusChanged = this.bridge.onDeviceStatusChanged((status) => {
+        const now = Date.now();
+        const isFirstCallback = !this.sawDeviceStatusCallback;
+        this.sawDeviceStatusCallback = true;
+        if (this.firstDeviceStatusCallbackAt === null) {
+          this.firstDeviceStatusCallbackAt = now;
+        }
+        this.latestDeviceStatusSnapshot = status;
+        this.latestDeviceStatusConnectType =
+          typeof status?.connectType === 'string' ? status.connectType : status?.connectType != null ? String(status.connectType) : null;
+        this.store.log(
+          `Device status callback${isFirstCallback ? ' (first)' : ''}: connectType=${this.latestDeviceStatusConnectType ?? 'unknown'}, batteryLevel=${String(status?.batteryLevel ?? 'unknown')}, isWearing=${String(status?.isWearing ?? 'unknown')}, isCharging=${String(status?.isCharging ?? 'unknown')}, elapsedSinceBridge=${this.formatElapsedFromBridge(this.firstDeviceStatusCallbackAt)}, raw=${safeSerialize(status)}`
+        );
+      });
+      this.store.log('Device status diagnostics listener attached.');
+    } catch (error) {
+      this.store.log(`Device status diagnostics listener attach failed: ${String(error)}`);
+      this.unsubscribeDeviceStatusChanged = null;
+    }
+  }
+
   private async shutdownPartiallyStartedPage(reason: string) {
     if (!this.startupLifecycle) {
       return;
+    }
+
+    if (this.unsubscribeLaunchSource) {
+      this.unsubscribeLaunchSource();
+      this.unsubscribeLaunchSource = null;
+    }
+
+    if (this.unsubscribeDeviceStatusChanged) {
+      this.unsubscribeDeviceStatusChanged();
+      this.unsubscribeDeviceStatusChanged = null;
     }
 
     if (this.unsubscribeEvenHubEvents) {
@@ -304,6 +550,9 @@ export class EvenBridgeApp {
     if (!this.bridge || !this.store.getState().started) {
       return;
     }
+
+    this.refreshCursorBlinkLoop();
+    this.refreshDraftVisibilityTimer();
 
     const signature = this.getSyncSignature();
     if (signature === this.lastSyncSignature) {
@@ -354,6 +603,16 @@ export class EvenBridgeApp {
   }
 
   cleanup() {
+    if (this.unsubscribeLaunchSource) {
+      this.unsubscribeLaunchSource();
+      this.unsubscribeLaunchSource = null;
+    }
+
+    if (this.unsubscribeDeviceStatusChanged) {
+      this.unsubscribeDeviceStatusChanged();
+      this.unsubscribeDeviceStatusChanged = null;
+    }
+
     if (this.unsubscribeEvenHubEvents) {
       this.unsubscribeEvenHubEvents();
       this.unsubscribeEvenHubEvents = null;
@@ -368,6 +627,14 @@ export class EvenBridgeApp {
       window.clearTimeout(this.glassesSyncTimer);
       this.glassesSyncTimer = null;
     }
+    if (this.cursorBlinkTimer !== null) {
+      window.clearInterval(this.cursorBlinkTimer);
+      this.cursorBlinkTimer = null;
+    }
+    if (this.draftVisibilityTimer !== null) {
+      window.clearTimeout(this.draftVisibilityTimer);
+      this.draftVisibilityTimer = null;
+    }
     this.syncInFlight = false;
     this.syncQueuedWhileInFlight = false;
     this.syncNeedsForcedImages = false;
@@ -376,6 +643,7 @@ export class EvenBridgeApp {
     this.imageQueue?.reset();
     this.lastRenderedPortraitAsset = null;
     this.lastSyncedTextContent = '';
+    this.lastRebuildSignature = '';
     this.lastSyncSignature = '';
     this.lastAudioLifecycleSignature = '';
     this.audioCapture.clearBuffer();
@@ -392,6 +660,81 @@ export class EvenBridgeApp {
     void this.stopSttIfNeeded('cleanup');
     void this.closeMicIfNeeded('cleanup');
     this.store.noteCleanup('cleanup');
+  }
+
+  private async runExtendedDeviceObservation() {
+    if (!this.bridge) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    const maxPolls = Math.max(1, Math.ceil(this.extendedDeviceObservationMs / this.extendedDeviceObservationPollMs));
+    this.store.log(
+      `Extended device observation started for ${this.extendedDeviceObservationMs}ms after gate failure; startup will remain blocked while diagnostics continue.`
+    );
+
+    for (let poll = 1; poll <= maxPolls; poll += 1) {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= this.extendedDeviceObservationMs) {
+        break;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, this.extendedDeviceObservationPollMs);
+      });
+
+      const device = await this.bridge.getDeviceInfo().catch((error) => {
+        this.store.log(`Extended observation getDeviceInfo failed on poll ${poll}/${maxPolls}: ${String(error)}`);
+        return null;
+      });
+
+      if (device) {
+        this.noteFirstNonNullDeviceInfo(`extended-observation-poll-${poll}`);
+      }
+
+      this.store.log(
+        `Extended device observation poll ${poll}/${maxPolls}: launchSource=${this.latestLaunchSource ?? 'missing'}, statusCallbackSeen=${this.sawDeviceStatusCallback ? 'yes' : 'no'}, connectType=${this.latestDeviceStatusConnectType ?? 'unknown'}, getDeviceInfo=${device ? 'non-null' : 'null'}, elapsedSinceBridge=${this.formatElapsedFromBridge()}`
+      );
+    }
+  }
+
+  private noteFirstNonNullDeviceInfo(context: string) {
+    if (this.firstNonNullDeviceInfoAt !== null) {
+      return;
+    }
+
+    this.firstNonNullDeviceInfoAt = Date.now();
+    this.store.log(
+      `Device info became non-null first observed during ${context}; elapsedSinceBridge=${this.formatElapsedFromBridge(this.firstNonNullDeviceInfoAt)}`
+    );
+  }
+
+  private formatElapsedFromBridge(at = Date.now()) {
+    if (this.bridgeReadyAt === null) {
+      return 'n/a';
+    }
+
+    return `${at - this.bridgeReadyAt}ms`;
+  }
+
+  private logSessionAttachSummary(stage: 'blocked' | 'startup-ready') {
+    const launchSourceSeen = this.sawLaunchSourceCallback ? 'yes' : 'no';
+    const launchSource = this.latestLaunchSource ?? 'missing';
+    const deviceStatusSeen = this.sawDeviceStatusCallback ? 'yes' : 'no';
+    const deviceInfoSeen = this.firstNonNullDeviceInfoAt !== null ? 'yes' : 'no';
+    const launchElapsed = this.firstLaunchSourceCallbackAt !== null
+      ? this.formatElapsedFromBridge(this.firstLaunchSourceCallbackAt)
+      : 'n/a';
+    const statusElapsed = this.firstDeviceStatusCallbackAt !== null
+      ? this.formatElapsedFromBridge(this.firstDeviceStatusCallbackAt)
+      : 'n/a';
+    const deviceElapsed = this.firstNonNullDeviceInfoAt !== null
+      ? this.formatElapsedFromBridge(this.firstNonNullDeviceInfoAt)
+      : 'n/a';
+
+    this.store.log(
+      `Session attach diagnostic summary (${stage}): launchSourceSeen=${launchSourceSeen}, launchSource=${launchSource}, deviceStatusSeen=${deviceStatusSeen}, latestConnectType=${this.latestDeviceStatusConnectType ?? 'unknown'}, deviceInfoNonNull=${deviceInfoSeen}, t_launchSource=${launchElapsed}, t_deviceStatus=${statusElapsed}, t_deviceInfo=${deviceElapsed}, elapsedSinceBridge=${this.formatElapsedFromBridge()}`
+    );
   }
 
   private setupEvenHubEventListener() {
@@ -559,6 +902,11 @@ export class EvenBridgeApp {
         continue;
       }
 
+      if (this.shouldSuppressSimulatorUnknownTap(item.input, item.inspection)) {
+        this.store.log('Action suppressed: ignoring simulator UNKNOWN_EVENT status-list echo during sync settle.');
+        continue;
+      }
+
       this.store.setLastInput(item.input, item.inspection);
 
       if (item.input === 'AT_TOP' || item.input === 'AT_BOTTOM') {
@@ -633,7 +981,14 @@ export class EvenBridgeApp {
       return;
     }
 
-    await this.startupLifecycle.attemptRebuild('state-sync', this.glasses.buildRebuildContainer());
+    this.refreshCursorBlinkLoop();
+    const rebuildSignature = this.glasses.getStructuralRebuildSignature();
+    if (rebuildSignature !== this.lastRebuildSignature) {
+      const rebuilt = await this.startupLifecycle.attemptRebuild('state-sync', this.glasses.buildRebuildContainer());
+      if (rebuilt) {
+        this.lastRebuildSignature = rebuildSignature;
+      }
+    }
 
     await this.syncText();
     await this.syncImages(forceImages);
@@ -643,9 +998,10 @@ export class EvenBridgeApp {
       GLASSES_CONTAINERS.statusList.name,
       this.glasses.getActionSeedIndex()
     );
+    this.suppressSimulatorUnknownTapUntil = Date.now() + this.simulatorUnknownTapSuppressMs;
   }
 
-  private async syncText() {
+  private async syncText(options?: { quiet?: boolean }) {
     if (!this.bridge || !this.store.getState().started) {
       return;
     }
@@ -668,9 +1024,13 @@ export class EvenBridgeApp {
       if (ok) {
         this.lastSyncedTextContent = text;
       }
-      this.store.log(ok ? 'Text synced to Even.' : 'Text sync failed.');
+      if (!options?.quiet) {
+        this.store.log(ok ? 'Text synced to Even.' : 'Text sync failed.');
+      }
     } catch (error) {
-      this.store.log(`Text sync error: ${String(error)}`);
+      if (!options?.quiet) {
+        this.store.log(`Text sync error: ${String(error)}`);
+      }
     }
   }
 
@@ -708,8 +1068,39 @@ export class EvenBridgeApp {
     }
   }
 
+  private refreshCursorBlinkLoop() {
+    const shouldAnimate = this.store.getState().started && this.glasses.shouldAnimateCursor();
+    if (!shouldAnimate) {
+      if (this.cursorBlinkTimer !== null) {
+        window.clearInterval(this.cursorBlinkTimer);
+        this.cursorBlinkTimer = null;
+      }
+      return;
+    }
+
+    if (this.cursorBlinkTimer !== null) {
+      return;
+    }
+
+    this.cursorBlinkTimer = window.setInterval(() => {
+      if (!this.store.getState().started || !this.glasses.shouldAnimateCursor()) {
+        if (this.cursorBlinkTimer !== null) {
+          window.clearInterval(this.cursorBlinkTimer);
+          this.cursorBlinkTimer = null;
+        }
+        return;
+      }
+
+      void this.syncText({ quiet: true });
+    }, this.glasses.getCursorBlinkIntervalMs());
+  }
+
   private getSyncSignature() {
     const state = this.store.getState();
+    const draftGraceActive =
+      state.sttDraftDisplayText.trim().length > 0 &&
+      state.sttDraftVisibleUntil !== null &&
+      Date.now() <= state.sttDraftVisibleUntil;
     return JSON.stringify({
       screen: state.screen,
       screenBeforeDebug: state.screenBeforeDebug,
@@ -730,6 +1121,8 @@ export class EvenBridgeApp {
       audioCaptureStatus: state.audioCaptureStatus,
       sttStatus: state.sttStatus,
       sttPartialBucket: state.sttPartialTranscript ? state.sttPartialTranscript.slice(0, 64) : null,
+      sttDraftVisible: draftGraceActive,
+      sttDraftBucket: draftGraceActive ? state.sttDraftDisplayText.slice(0, 64) : null,
       sttError: state.sttError,
       audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 500),
       activityBucket: Math.floor(state.listeningActivityLevel * 10),
@@ -737,6 +1130,38 @@ export class EvenBridgeApp {
       lastNormalizedInput: state.lastNormalizedInput,
       lastRawEventType: state.lastRawEvent?.rawEventTypeName ?? null,
     });
+  }
+
+  private refreshDraftVisibilityTimer() {
+    const state = this.store.getState();
+    if (
+      !state.sttDraftDisplayText.trim() ||
+      state.sttDraftVisibleUntil === null
+    ) {
+      if (this.draftVisibilityTimer !== null) {
+        window.clearTimeout(this.draftVisibilityTimer);
+        this.draftVisibilityTimer = null;
+      }
+      return;
+    }
+
+    const remainingMs = state.sttDraftVisibleUntil - Date.now();
+    if (remainingMs <= 0) {
+      if (this.draftVisibilityTimer !== null) {
+        window.clearTimeout(this.draftVisibilityTimer);
+        this.draftVisibilityTimer = null;
+      }
+      return;
+    }
+
+    if (this.draftVisibilityTimer !== null) {
+      window.clearTimeout(this.draftVisibilityTimer);
+    }
+
+    this.draftVisibilityTimer = window.setTimeout(() => {
+      this.draftVisibilityTimer = null;
+      this.queueSyncFromState();
+    }, remainingMs + 10);
   }
 
   private async ensureSttForCurrentState() {
@@ -766,6 +1191,10 @@ export class EvenBridgeApp {
       return;
     }
 
+    if (this.sttStartInFlightListeningSessionId === state.listeningSessionId) {
+      return;
+    }
+
     await this.startSttSessionForListening(state.listeningSessionId, false);
   }
 
@@ -781,6 +1210,18 @@ export class EvenBridgeApp {
       return;
     }
 
+    if (this.sttSession) {
+      return;
+    }
+
+    if (this.sttStartInFlightListeningSessionId === listeningSessionId) {
+      return;
+    }
+
+    const sttStartAttemptToken = this.nextSttStartAttemptToken++;
+    this.sttStartInFlightListeningSessionId = listeningSessionId;
+    this.sttStartInFlightAttemptToken = sttStartAttemptToken;
+
     this.logSttEvent('stt_auth_requested', { listeningSessionId, retry: isRetry });
 
     let accessToken = '';
@@ -789,6 +1230,7 @@ export class EvenBridgeApp {
       accessToken = auth.accessToken;
       this.logSttEvent('stt_auth_succeeded', { listeningSessionId, retry: isRetry });
     } catch (error) {
+      this.clearSttStartInFlight(sttStartAttemptToken);
       const appError = this.toAppError(error, {
         category: 'auth_error',
         code: 'stt_auth_unavailable',
@@ -811,11 +1253,34 @@ export class EvenBridgeApp {
       return;
     }
 
+    if (!this.isCurrentSttStartAttempt(listeningSessionId, sttStartAttemptToken)) {
+      return;
+    }
+
+    const latestState = this.store.getState();
+    if (
+      !latestState.started ||
+      latestState.screen !== 'listening' ||
+      latestState.listeningSessionId !== listeningSessionId ||
+      !latestState.micOpen ||
+      latestState.audioCaptureStatus !== 'listening' ||
+      !this.audioCapture.isMicOpen()
+    ) {
+      this.clearSttStartInFlight(sttStartAttemptToken);
+      return;
+    }
+
+    if (this.sttSession) {
+      this.clearSttStartInFlight(sttStartAttemptToken);
+      return;
+    }
+
     const session = new DeepgramStreamingSttSession({ accessToken });
     const sttSessionToken = this.nextSttSessionToken++;
     this.sttSession = session;
     this.activeSttListeningSessionId = listeningSessionId;
     this.activeSttSessionToken = sttSessionToken;
+    this.clearSttStartInFlight(sttStartAttemptToken);
     this.lastCommittedFinal = null;
     this.clearPendingPartialFlush('new-session');
     this.store.setSttStatus('connecting', { error: null });
@@ -862,15 +1327,27 @@ export class EvenBridgeApp {
         return;
       }
 
+      this.logSttEvent('stt_runtime_error', {
+        listeningSessionId,
+        retry: isRetry,
+        detail: error,
+      });
       void this.handleSttErrorForSession(listeningSessionId, sttSessionToken, session, error);
     });
 
     try {
+      this.logSttEvent('stt_start_connecting', { listeningSessionId, retry: isRetry });
       await session.start();
+      this.logSttEvent('stt_start_succeeded', { listeningSessionId, retry: isRetry });
       if (!this.canApplySttCallback(listeningSessionId, sttSessionToken, session, 'post-start-reconcile')) {
-        await this.stopSttIfNeeded('post-start-reconcile');
+        if (this.sttSession === session) {
+          await this.stopSttIfNeeded('post-start-reconcile');
+        } else {
+          await this.safeStopSttSession(session).catch(() => undefined);
+        }
       }
     } catch (error) {
+      this.clearSttStartInFlight(sttStartAttemptToken);
       if (this.sttSession === session) {
         this.sttSession = null;
         this.activeSttListeningSessionId = null;
@@ -892,6 +1369,7 @@ export class EvenBridgeApp {
         retry: isRetry,
         category: appError.category,
         code: appError.code,
+        detail: appError.detail,
       });
       if (!this.isListeningSessionActive(listeningSessionId)) {
         return;
@@ -906,8 +1384,45 @@ export class EvenBridgeApp {
     }
   }
 
+  private isCurrentSttStartAttempt(listeningSessionId: number, attemptToken: number) {
+    return (
+      this.sttStartInFlightListeningSessionId === listeningSessionId &&
+      this.sttStartInFlightAttemptToken === attemptToken
+    );
+  }
+
+  private clearSttStartInFlight(attemptToken?: number) {
+    if (
+      typeof attemptToken === 'number' &&
+      this.sttStartInFlightAttemptToken !== attemptToken
+    ) {
+      return;
+    }
+
+    this.sttStartInFlightListeningSessionId = null;
+    this.sttStartInFlightAttemptToken = null;
+  }
+
   private async stopSttIfNeeded(reason: string) {
+    if (this.sttStopInFlight) {
+      await this.sttStopInFlight;
+      return;
+    }
+
+    const stopPromise = this.stopSttSessionInternal(reason);
+    this.sttStopInFlight = stopPromise;
+    try {
+      await stopPromise;
+    } finally {
+      if (this.sttStopInFlight === stopPromise) {
+        this.sttStopInFlight = null;
+      }
+    }
+  }
+
+  private async stopSttSessionInternal(reason: string) {
     this.clearSttRetryTimer(reason);
+    this.clearSttStartInFlight();
     this.clearPendingPartialFlush(reason);
     if (!reason.includes('stt-retry')) {
       this.sttReconnectAttemptedSessionId = null;
@@ -945,13 +1460,21 @@ export class EvenBridgeApp {
     });
 
     try {
-      await session.stop();
+      await this.safeStopSttSession(session);
       this.store.setSttStatus('idle', { error: null });
       this.store.log(`STT close success (${reason}).`);
     } catch (error) {
       this.store.setSttStatus('error', { error: `STT close failed: ${String(error)}` });
       this.store.log(`STT close failed (${reason}): ${String(error)}`);
     }
+  }
+
+  private async safeStopSttSession(session: StreamingSttSession | null | undefined) {
+    if (!session || typeof session.stop !== 'function') {
+      return;
+    }
+
+    await session.stop();
   }
 
   private clearSttRetryTimer(reason = 'cancelled') {
@@ -1293,6 +1816,33 @@ export class EvenBridgeApp {
   private currentContactName() {
     const state = this.store.getState();
     return CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown';
+  }
+
+  private shouldSuppressSimulatorUnknownTap(
+    input: NormalizedInput,
+    inspection: RawEventDebugInfo
+  ) {
+    if (input !== 'TAP' || Date.now() >= this.suppressSimulatorUnknownTapUntil) {
+      return false;
+    }
+
+    if (
+      inspection.source !== 'listEvent' ||
+      inspection.containerID !== GLASSES_CONTAINERS.statusList.id ||
+      inspection.containerName !== GLASSES_CONTAINERS.statusList.name
+    ) {
+      return false;
+    }
+
+    if (inspection.currentSelectItemIndex === null && inspection.currentSelectItemName === null) {
+      return false;
+    }
+
+    const tokens = inspection.eventTypeCandidates.length > 0
+      ? inspection.eventTypeCandidates
+      : [inspection.normalizedTypeToken];
+
+    return tokens.every((token) => token === 'UNKNOWN_EVENT');
   }
 
   private getAudioLifecycleSignature(state: ReturnType<AppStore['getState']>) {

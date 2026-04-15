@@ -5,15 +5,13 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
 
   return {
-    screenLabel: 'INCOMING',
+    screenLabel: `${contact.name.toUpperCase()} ${contact.frequency}`,
+    statusLabel: 'INCOMING CALL',
     portraitAsset: getPortraitAssetForState(state),
-    dialogue: wrapText([
-      'INCOMING CODEC',
-      `${contact.name.toUpperCase()} LINK REQUEST`,
-      `FREQ ${contact.frequency}`,
-      'SECURE CHANNEL READY',
-    ].join('\n'), 27, 4),
-    actions: ['Answer', 'Ignore'],
+    dialogue: wrapText(`${contact.name.toUpperCase()} requesting link.`, 27, 2),
+    actions: ['ANSWER', 'IGNORE'],
     selectedActionIndex: state.incomingActionIndex,
+    mode: 'compact',
+    liveLineKind: 'none',
   };
 }
