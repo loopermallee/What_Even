@@ -21,14 +21,20 @@ export function renderCodecPortrait(options: {
       </div>
       <div
         class="portrait-face ${spriteCharacter ? 'portrait-face-sprite-capable' : ''}"
+        data-portrait-character="${spriteCharacter}"
         data-codec-sprite-character="${spriteCharacter}"
         data-codec-sprite-speaking="${spriteCharacter ? String(options.mouthOpen) : 'false'}"
       >
-        <div class="portrait-silhouette">${options.tag}</div>
-        <div class="mouth-slot ${options.mouthOpen ? 'open' : ''}">
-          <div class="mouth-core"></div>
+        <div class="portrait-viewport">
+          <div class="portrait-silhouette">${options.tag}</div>
+          ${spriteCharacter ? '<canvas class="codec-sprite-canvas" aria-hidden="true"></canvas>' : ''}
+          <div class="portrait-static-overlay" aria-hidden="true">
+            <div class="portrait-static-band"></div>
+          </div>
+          <div class="mouth-slot ${options.mouthOpen ? 'open' : ''}">
+            <div class="mouth-core"></div>
+          </div>
         </div>
-        ${spriteCharacter ? '<canvas class="codec-sprite-canvas" aria-hidden="true"></canvas>' : ''}
       </div>
       <div class="portrait-tag">${options.tag}</div>
     </div>

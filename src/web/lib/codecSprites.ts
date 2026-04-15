@@ -15,8 +15,9 @@ type CharacterSpriteConfig = {
   excludedIndexes?: number[];
   idleFrames: number[];
   speakingFrames: number[];
-  offsetX?: number;
-  offsetY?: number;
+  cropZoom?: number;
+  cropOffsetX?: number;
+  cropOffsetY?: number;
 };
 
 type SpriteSheetData = {
@@ -56,8 +57,8 @@ const FRAME_WIDTH_MIN = 44;
 const FRAME_WIDTH_MAX = 60;
 const FRAME_HEIGHT_MIN = 80;
 const FRAME_HEIGHT_MAX = 96;
-const PORTRAIT_VIEWPORT_WIDTH = 64;
-const PORTRAIT_VIEWPORT_HEIGHT = 96;
+const PORTRAIT_VIEWPORT_WIDTH = 112;
+const PORTRAIT_VIEWPORT_HEIGHT = 148;
 const TALK_FRAME_MS = 150;
 const IDLE_MIN_INTERVAL_MS = 2200;
 const IDLE_MAX_INTERVAL_MS = 4200;
@@ -74,12 +75,17 @@ const spriteConfigs: Record<SpriteCharacterId, CharacterSpriteConfig> = {
     sheetUrl: otaconSheetUrl,
     idleFrames: [0, 12, 18, 19],
     speakingFrames: [20, 21, 22, 23],
+    cropZoom: 1.18,
+    cropOffsetY: -4,
   },
   snake: {
     sheetUrl: snakeSheetUrl,
     excludedIndexes: [35, 36, 37, 40, 41],
     idleFrames: [0, 14, 18],
     speakingFrames: [8, 19, 29, 42, 44],
+    cropZoom: 1.34,
+    cropOffsetX: 2,
+    cropOffsetY: -8,
   },
   // Selected from the provided sheet by visual grouping after top-to-bottom / left-to-right extraction.
   // These favor the standard front-facing portrait row for idle and a more expressive lower row for talk.
@@ -87,7 +93,8 @@ const spriteConfigs: Record<SpriteCharacterId, CharacterSpriteConfig> = {
     sheetUrl: merylSheetUrl,
     idleFrames: [13, 18, 20],
     speakingFrames: [29, 30, 31, 32],
-    offsetY: -1,
+    cropZoom: 1.2,
+    cropOffsetY: -5,
   },
   // Selected from the provided sheet by visual grouping after extraction.
   // The row around indexes 8-10 is the most expressive on the sheet, so it is used for talking.
@@ -95,7 +102,8 @@ const spriteConfigs: Record<SpriteCharacterId, CharacterSpriteConfig> = {
     sheetUrl: colonelSheetUrl,
     idleFrames: [0, 12, 18],
     speakingFrames: [8, 9, 10, 15],
-    offsetY: -1,
+    cropZoom: 1.22,
+    cropOffsetY: -6,
   },
 };
 
@@ -349,16 +357,23 @@ function drawFrame(canvas: HTMLCanvasElement, characterId: SpriteCharacterId, im
     throw new Error('Canvas 2D context unavailable for sprite portrait rendering.');
   }
 
-  if (canvas.width !== PORTRAIT_VIEWPORT_WIDTH || canvas.height !== PORTRAIT_VIEWPORT_HEIGHT) {
-    canvas.width = PORTRAIT_VIEWPORT_WIDTH;
-    canvas.height = PORTRAIT_VIEWPORT_HEIGHT;
+  const bounds = canvas.getBoundingClientRect();
+  const devicePixelRatio = window.devicePixelRatio || 1;
+  const viewportWidth = Math.max(1, Math.round((bounds.width || PORTRAIT_VIEWPORT_WIDTH) * devicePixelRatio));
+  const viewportHeight = Math.max(1, Math.round((bounds.height || PORTRAIT_VIEWPORT_HEIGHT) * devicePixelRatio));
+
+  if (canvas.width !== viewportWidth || canvas.height !== viewportHeight) {
+    canvas.width = viewportWidth;
+    canvas.height = viewportHeight;
   }
 
   const config = spriteConfigs[characterId];
-  const offsetX = config.offsetX ?? 0;
-  const offsetY = config.offsetY ?? 0;
-  const drawX = Math.floor((PORTRAIT_VIEWPORT_WIDTH - frame.width) / 2) + offsetX;
-  const drawY = PORTRAIT_VIEWPORT_HEIGHT - frame.height + offsetY;
+  const zoom = config.cropZoom ?? 1;
+  const scale = Math.max(viewportWidth / frame.width, viewportHeight / frame.height) * zoom;
+  const drawWidth = Math.ceil(frame.width * scale);
+  const drawHeight = Math.ceil(frame.height * scale);
+  const drawX = Math.round((viewportWidth - drawWidth) / 2 + ((config.cropOffsetX ?? 0) * devicePixelRatio));
+  const drawY = Math.round((viewportHeight - drawHeight) / 2 + ((config.cropOffsetY ?? 0) * devicePixelRatio));
 
   context.imageSmoothingEnabled = false;
   context.clearRect(0, 0, canvas.width, canvas.height);
@@ -370,8 +385,8 @@ function drawFrame(canvas: HTMLCanvasElement, characterId: SpriteCharacterId, im
     frame.height,
     drawX,
     drawY,
-    frame.width,
-    frame.height,
+    drawWidth,
+    drawHeight,
   );
 }
 

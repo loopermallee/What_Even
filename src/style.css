@@ -469,8 +469,12 @@ h1 {
 }
 
 .portrait-frame {
+  --portrait-static-opacity: 0.12;
+  --portrait-static-band-opacity: 0.16;
+  --portrait-static-band-speed: 4.8s;
+  --portrait-static-jitter-speed: 1.15s;
   display: grid;
-  grid-template-rows: auto minmax(104px, 1fr) auto;
+  grid-template-rows: auto minmax(136px, 1fr) auto;
   min-height: 100%;
   border-radius: 8px;
   border: 1px solid rgba(174, 255, 208, 0.18);
@@ -483,6 +487,9 @@ h1 {
 }
 
 .portrait-frame.active {
+  --portrait-static-opacity: 0.18;
+  --portrait-static-band-opacity: 0.24;
+  --portrait-static-band-speed: 3.6s;
   border-color: var(--codec-border-strong);
   box-shadow:
     inset 0 0 0 1px rgba(229, 255, 238, 0.09),
@@ -520,9 +527,9 @@ h1 {
 
 .portrait-face {
   position: relative;
-  min-height: 104px;
-  display: grid;
-  place-items: center;
+  min-height: 136px;
+  padding: 6px;
+  display: flex;
   background:
     radial-gradient(circle at 50% 22%, rgba(164, 255, 204, 0.2), transparent 44%),
     linear-gradient(180deg, rgba(9, 23, 15, 0.96), rgba(2, 6, 4, 0.99));
@@ -534,21 +541,53 @@ h1 {
   overflow: hidden;
 }
 
+.portrait-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(188, 255, 217, 0.12);
+  background:
+    radial-gradient(circle at 50% 20%, rgba(170, 255, 207, 0.18), transparent 38%),
+    linear-gradient(180deg, rgba(11, 29, 20, 0.94), rgba(3, 8, 5, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(216, 255, 229, 0.04),
+    inset 0 -24px 30px rgba(0, 0, 0, 0.16);
+}
+
+.portrait-viewport::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(190, 255, 218, 0.09);
+  pointer-events: none;
+}
+
 .portrait-silhouette {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-top: 10%;
   color: rgba(198, 255, 223, 0.88);
-  font-size: 1.7rem;
+  font-size: clamp(2rem, 4.4vw, 3rem);
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 18px rgba(85, 191, 124, 0.18);
 }
 
 .codec-sprite-canvas {
+  position: absolute;
+  inset: 0;
   display: none;
-  width: auto;
-  height: 96px;
-  max-width: 100%;
+  width: 100%;
+  height: 100%;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  filter: drop-shadow(0 0 14px rgba(101, 202, 137, 0.18));
+  filter:
+    saturate(1.03)
+    contrast(1.05)
+    drop-shadow(0 0 14px rgba(101, 202, 137, 0.14));
 }
 
 .portrait-face.sprite-ready .codec-sprite-canvas {
@@ -560,9 +599,72 @@ h1 {
   display: none;
 }
 
+.portrait-static-overlay,
+.portrait-static-band {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.portrait-static-overlay {
+  z-index: 3;
+  opacity: var(--portrait-static-opacity);
+  mix-blend-mode: screen;
+}
+
+.portrait-static-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.18) 0 1px,
+      transparent 1px 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(245, 255, 250, 0.08) 0 1px,
+      transparent 1px 7px
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.12),
+      rgba(190, 255, 220, 0.02) 22%,
+      rgba(255, 255, 255, 0.08) 48%,
+      rgba(0, 0, 0, 0.04) 100%
+    );
+  animation: portrait-static-jitter var(--portrait-static-jitter-speed) steps(6) infinite;
+}
+
+.portrait-static-overlay::after {
+  content: "";
+  position: absolute;
+  inset: -20% 0;
+  background:
+    radial-gradient(circle at center, rgba(225, 255, 236, 0.12), transparent 58%);
+  opacity: 0.32;
+  animation: portrait-static-drift 8s linear infinite;
+}
+
+.portrait-static-band {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgb(228 255 238 / var(--portrait-static-band-opacity)) 48%,
+    transparent 100%
+  );
+  opacity: 0.55;
+  transform: translateY(-120%);
+  animation: portrait-static-band var(--portrait-static-band-speed) linear infinite;
+}
+
 .mouth-slot {
   position: absolute;
-  bottom: 8px;
+  left: 50%;
+  bottom: 10px;
+  z-index: 4;
+  transform: translateX(-50%);
   width: 24px;
   height: 6px;
   border: 1px solid rgba(164, 255, 204, 0.18);
@@ -577,6 +679,62 @@ h1 {
   height: 3px;
   border-radius: 999px;
   background: #d7ffe8;
+}
+
+@keyframes portrait-static-jitter {
+  0% {
+    transform: translate3d(0, 0, 0);
+    background-position: 0 0, 0 0, 0 0;
+  }
+
+  20% {
+    transform: translate3d(-1px, 0, 0);
+    background-position: 0 2px, 2px 0, 0 0;
+  }
+
+  40% {
+    transform: translate3d(1px, -1px, 0);
+    background-position: 0 -1px, -3px 0, 0 0;
+  }
+
+  60% {
+    transform: translate3d(0, 1px, 0);
+    background-position: 0 1px, 1px 0, 0 0;
+  }
+
+  80% {
+    transform: translate3d(-1px, 0, 0);
+    background-position: 0 -2px, -2px 0, 0 0;
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0);
+    background-position: 0 0, 0 0, 0 0;
+  }
+}
+
+@keyframes portrait-static-band {
+  0% {
+    transform: translateY(-120%);
+  }
+
+  100% {
+    transform: translateY(120%);
+  }
+}
+
+@keyframes portrait-static-drift {
+  0% {
+    transform: translate3d(0, -8%, 0);
+  }
+
+  50% {
+    transform: translate3d(0, 8%, 0);
+  }
+
+  100% {
+    transform: translate3d(0, -8%, 0);
+  }
 }
 
 .codec-center-core {
@@ -1538,15 +1696,16 @@ h1 {
   }
 
   .portrait-frame {
-    grid-template-rows: auto minmax(84px, 1fr) auto;
+    grid-template-rows: auto minmax(106px, 1fr) auto;
   }
 
   .portrait-face {
-    min-height: 84px;
+    min-height: 106px;
+    padding: 5px;
   }
 
   .codec-sprite-canvas {
-    height: 78px;
+    height: 100%;
   }
 
   .codec-dialogue-deck,
@@ -1655,11 +1814,11 @@ h1 {
   }
 
   .portrait-face {
-    min-height: 78px;
+    min-height: 92px;
   }
 
   .codec-sprite-canvas {
-    height: 70px;
+    height: 100%;
   }
 
   .codec-action-row {
