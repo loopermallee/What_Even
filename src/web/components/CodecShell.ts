@@ -19,7 +19,7 @@ export function renderCodecShell(state: AppState, options: {
   const barsHtml = renderSignalBars(options.barLevel);
 
   return `
-    <div class="codec-shell">
+    <div class="codec-shell ${options.mouthOpen ? 'codec-machine-speaking' : 'codec-machine-idle'}">
       <div class="codec-transmission-layers" aria-hidden="true">
         <div class="codec-noise-layer"></div>
         <div class="codec-crt-layer"></div>

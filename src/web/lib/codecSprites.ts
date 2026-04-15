@@ -418,8 +418,7 @@ async function paintPortraitFrame(controller: PortraitController, now: number) {
   const frameSet = await resolveFrameSet(controller.characterId, controller.speaking ? 'speaking' : 'idle');
 
   if (controller.speaking) {
-    const frame = frameSet.frames[controller.speakingFrameIndex % frameSet.frames.length] ?? frameSet.frames[0];
-    controller.speakingFrameIndex = (controller.speakingFrameIndex + 1) % frameSet.frames.length;
+    const frame = frameSet.frames[0];
     drawFrame(controller.canvas, controller.characterId, frameSet.image, frame);
     return;
   }
