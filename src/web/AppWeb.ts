@@ -292,12 +292,22 @@ function getRawStateSnapshot(state: AppState) {
   };
 }
 
+function getLatestRuntimeError(state: AppState) {
+  return state.responseError
+    ?? state.sttError
+    ?? state.audioError
+    ?? state.evenStartupBlockedMessage
+    ?? state.evenStartupBlockedCode
+    ?? null;
+}
+
 export class AppWeb {
   private readonly store: AppStore;
   private readonly startOnEven: (options?: { forceReset?: boolean }) => Promise<void>;
   private unsubscribe: (() => void) | null = null;
   private readonly lifecycleRaceHarness: LifecycleRaceHarness;
   private contactPickerOpen = false;
+  private debugDrawerOpen = false;
   private previousState: AppState | null = null;
   private activeCodecGlitch: 'connect' | 'switch' | 'interrupt' | null = null;
   private codecGlitchTimer: number | null = null;
@@ -409,6 +419,7 @@ export class AppWeb {
     const snapshot = getCodecDialogueSnapshot(state);
     const pickerVisible = state.screen === 'contacts' && this.contactPickerOpen;
     const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
+    const latestError = getLatestRuntimeError(state);
     const surfaceMode = state.screen === 'contacts'
       ? 'Directory standby'
       : state.screen === 'incoming'
@@ -442,20 +453,18 @@ export class AppWeb {
               <h1>What Even</h1>
               <span class="companion-mode-pill">${escapeHtml(surfaceMode)}</span>
             </div>
-            <p class="subtitle">Codec companion surface</p>
           </div>
           <div class="header-actions">
+            <span class="host-status-chip ${state.evenNativeHostDetected ? '' : 'host-status-chip-warning'}">
+              ${state.evenNativeHostDetected ? 'Host linked' : 'Host unavailable'}
+            </span>
             <button
               id="startEvenBtn"
               class="header-button ${state.evenNativeHostDetected ? '' : 'header-button-disabled'}"
               title="${state.evenNativeHostDetected ? 'Start on Even' : 'Requires the Even app native host'}"
             >${state.started ? 'Restart on Even' : 'Start on Even'}</button>
-            ${import.meta.env.DEV ? '<button id="toggleDebugBtn" class="debug-link">Debug</button>' : ''}
           </div>
         </div>
-        ${state.evenNativeHostDetected
-          ? ''
-          : '<p class="host-warning host-warning-inline">Even native host missing. Glasses startup stays unavailable in this browser context.</p>'}
 
         <section class="codec-stage">
           <div class="codec-machine ${this.activeCodecGlitch ? `codec-glitch-${this.activeCodecGlitch}` : ''}">
@@ -466,21 +475,21 @@ export class AppWeb {
               <div class="codec-glitch-layer"></div>
             </div>
 
-            <div class="codec-machine-rail">
-              <div class="codec-machine-summary">
-                <span class="section-label">Current Contact</span>
+            <div class="codec-status-strip">
+              <div class="codec-status-cell">
+                <span class="section-label">Contact</span>
                 <strong>${escapeHtml(contact.name)}</strong>
                 <span>${escapeHtml(contact.code)} · ${escapeHtml(contact.frequency)}</span>
               </div>
-              <div class="codec-machine-summary codec-machine-summary-center">
-                <span class="section-label">Channel State</span>
+              <div class="codec-status-cell codec-status-cell-center">
+                <span class="section-label">Channel</span>
                 <strong>${escapeHtml(snapshot.stateLabel)}</strong>
                 <span>${escapeHtml(snapshot.speakerLabel)}</span>
               </div>
-              <div class="codec-machine-summary codec-machine-summary-right">
-                <span class="section-label">Companion</span>
-                <strong>${escapeHtml(RIGHT_CHARACTER.name)}</strong>
-                <span>${state.started ? 'Bridge armed' : 'Waiting for startup'}</span>
+              <div class="codec-status-cell codec-status-cell-right">
+                <span class="section-label">Bridge</span>
+                <strong>${state.started ? 'Armed' : 'Standby'}</strong>
+                <span>${state.evenNativeHostDetected ? 'Glasses sync ready' : 'Browser-only session'}</span>
               </div>
             </div>
 
@@ -505,7 +514,7 @@ export class AppWeb {
                     </div>
                   </div>
                 </div>
-                <div class="codec-center-cap bottom">MEMORY</div>
+                <div class="codec-center-cap bottom">${escapeHtml(snapshot.speakerLabel)}</div>
               </div>
 
               <div class="codec-portrait-bay codec-portrait-bay-right">
@@ -517,32 +526,34 @@ export class AppWeb {
               </div>
             </div>
 
-            <div class="codec-dialogue-deck">
-              <div class="codec-dialogue-head codec-dialogue-head-compact">
-                <div>
-                  <span class="section-label">Live Dialogue</span>
-                  <div class="codec-dialogue-speaker-row">
-                    <span class="dialogue-speaker">${escapeHtml(snapshot.speakerLabel)}</span>
-                    <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
+            <div class="codec-comms-stack">
+              <div class="codec-dialogue-deck">
+                <div class="codec-dialogue-head codec-dialogue-head-compact">
+                  <div>
+                    <span class="section-label">Live Dialogue</span>
+                    <div class="codec-dialogue-speaker-row">
+                      <span class="dialogue-speaker">${escapeHtml(snapshot.speakerLabel)}</span>
+                      <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
+                    </div>
                   </div>
+                  <span class="codec-state-pill">${escapeHtml(snapshot.stateLabel)}</span>
                 </div>
-                <span class="codec-state-pill">${escapeHtml(snapshot.stateLabel)}</span>
-              </div>
-              <div class="dialogue-current-line">${escapeHtml(snapshot.currentLine)}</div>
-              ${snapshot.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(snapshot.previousLine)}</div>` : ''}
-            </div>
-
-            <div class="codec-transcript-deck">
-              <div class="codec-transcript-head">
-                <div>
-                  <div class="section-label">Transcript</div>
-                  <h2>${transcriptTitle}</h2>
-                </div>
-                <span class="codec-line-index">Latest 6 lines</span>
+                <div class="dialogue-current-line">${escapeHtml(snapshot.currentLine)}</div>
+                ${snapshot.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(snapshot.previousLine)}</div>` : ''}
               </div>
 
-              <div class="transcript-history codec-transcript-history">
-                ${renderTranscriptPanel(state.transcript, { partialText: state.sttPartialTranscript })}
+              <div class="codec-transcript-deck">
+                <div class="codec-transcript-head">
+                  <div>
+                    <div class="section-label">Transcript</div>
+                    <h2>${transcriptTitle}</h2>
+                  </div>
+                  <span class="codec-line-index">Latest 6 lines</span>
+                </div>
+
+                <div class="transcript-history codec-transcript-history">
+                  ${renderTranscriptPanel(state.transcript, { partialText: state.sttPartialTranscript })}
+                </div>
               </div>
             </div>
 
@@ -550,11 +561,82 @@ export class AppWeb {
               <div class="codec-action-row">
                 <button id="${actions.primary.id}" class="primary-action codec-action-button">${actions.primary.label}</button>
                 <button id="${actions.secondary.id}" class="secondary-action codec-action-button">${actions.secondary.label}</button>
-                ${import.meta.env.DEV ? '<button id="toggleDebugBtnInline" class="secondary-action codec-action-button codec-action-button-debug">Debug</button>' : ''}
               </div>
             ` : ''}
           </div>
         </section>
+
+        <div class="debug-drawer-anchor ${this.debugDrawerOpen ? 'debug-drawer-anchor-open' : ''}">
+          ${this.debugDrawerOpen ? `
+            <section id="debugDrawerPanel" class="debug-drawer-panel" aria-label="Troubleshooting drawer">
+              <div class="debug-drawer-header">
+                <div>
+                  <div class="section-label">Troubleshooting</div>
+                  <h2>Runtime Status</h2>
+                </div>
+                <div class="debug-drawer-actions">
+                  ${import.meta.env.DEV ? '<button id="toggleDebugBtn" class="debug-drawer-action">Full Debug</button>' : ''}
+                  <button id="copyLogBtn" class="debug-drawer-action">Copy Log</button>
+                  <button id="clearLogBtn" class="debug-drawer-action">Clear Log</button>
+                  <button id="debugDrawerCloseBtn" class="debug-drawer-action">Close</button>
+                </div>
+              </div>
+
+              <div class="debug-summary-grid">
+                <div class="debug-summary-item">
+                  <span class="section-label">Native Host</span>
+                  <strong>${state.evenNativeHostDetected ? 'Detected' : 'Missing'}</strong>
+                </div>
+                <div class="debug-summary-item">
+                  <span class="section-label">Startup</span>
+                  <strong>${escapeHtml(state.evenStartupStatus)}</strong>
+                </div>
+                <div class="debug-summary-item">
+                  <span class="section-label">Screen</span>
+                  <strong>${escapeHtml(state.screen)}</strong>
+                </div>
+                <div class="debug-summary-item">
+                  <span class="section-label">Mic</span>
+                  <strong>${state.micOpen ? 'Open' : 'Closed'}</strong>
+                </div>
+                <div class="debug-summary-item">
+                  <span class="section-label">STT</span>
+                  <strong>${escapeHtml(state.sttStatus)}</strong>
+                </div>
+                <div class="debug-summary-item">
+                  <span class="section-label">Startup Blocked</span>
+                  <strong>${escapeHtml(state.evenStartupBlockedCode ?? 'none')}</strong>
+                </div>
+                <div class="debug-summary-item debug-summary-item-wide">
+                  <span class="section-label">Latest Error</span>
+                  <strong>${escapeHtml(latestError ?? 'none')}</strong>
+                </div>
+                <div class="debug-summary-item debug-summary-item-wide">
+                  <span class="section-label">Recent Log Count</span>
+                  <strong>${state.logs.length}</strong>
+                </div>
+              </div>
+
+              ${renderDebugLog(state.logs, {
+                title: 'Recent Log',
+                className: 'log-card log-card-compact',
+                emptyLabel: 'No recent log lines yet.',
+              })}
+            </section>
+          ` : ''}
+
+          <button
+            id="debugDrawerToggleBtn"
+            class="debug-drawer-trigger ${this.debugDrawerOpen ? 'debug-drawer-trigger-open' : ''}"
+            aria-expanded="${this.debugDrawerOpen ? 'true' : 'false'}"
+            aria-controls="debugDrawerPanel"
+          >
+            <span>Status</span>
+            <span>${state.evenStartupStatus}</span>
+            <span>${state.sttStatus}</span>
+            <span>${state.logs.length} logs</span>
+          </button>
+        </div>
 
         ${pickerVisible ? `
           <div class="picker-sheet-backdrop" id="contactPickerDismissBtn"></div>
@@ -792,6 +874,22 @@ export class AppWeb {
         } else {
           this.store.enterDebugScreen();
         }
+      };
+    }
+
+    const debugDrawerToggleBtn = document.querySelector<HTMLButtonElement>('#debugDrawerToggleBtn');
+    if (debugDrawerToggleBtn) {
+      debugDrawerToggleBtn.onclick = () => {
+        this.debugDrawerOpen = !this.debugDrawerOpen;
+        this.render(this.store.getState());
+      };
+    }
+
+    const debugDrawerCloseBtn = document.querySelector<HTMLButtonElement>('#debugDrawerCloseBtn');
+    if (debugDrawerCloseBtn) {
+      debugDrawerCloseBtn.onclick = () => {
+        this.debugDrawerOpen = false;
+        this.render(this.store.getState());
       };
     }
 
