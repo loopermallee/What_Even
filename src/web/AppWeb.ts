@@ -409,6 +409,15 @@ export class AppWeb {
     const snapshot = getCodecDialogueSnapshot(state);
     const pickerVisible = state.screen === 'contacts' && this.contactPickerOpen;
     const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
+    const surfaceMode = state.screen === 'contacts'
+      ? 'Directory standby'
+      : state.screen === 'incoming'
+        ? 'Incoming link'
+        : state.screen === 'listening'
+          ? 'Live listening'
+          : state.screen === 'active'
+            ? 'Codec channel open'
+            : 'Link closed';
     const leftPortrait = renderCodecPortrait({
       label: contact.name.toUpperCase(),
       tag: contact.portraitTag,
@@ -426,14 +435,14 @@ export class AppWeb {
 
     return `
       <div class="wrap">
-        <div class="companion-header">
-          <div>
+        <div class="companion-header companion-header-compact">
+          <div class="companion-identity">
             <p class="eyebrow">Companion App</p>
-            <h1>What Even</h1>
-            <p class="subtitle">Codec-ready mobile companion with a clean call-first surface.</p>
-            ${state.evenNativeHostDetected
-              ? ''
-              : '<p class="host-warning">Glasses startup is only available inside the Even app native host.</p>'}
+            <div class="companion-title-row">
+              <h1>What Even</h1>
+              <span class="companion-mode-pill">${escapeHtml(surfaceMode)}</span>
+            </div>
+            <p class="subtitle">Codec companion surface</p>
           </div>
           <div class="header-actions">
             <button
@@ -444,6 +453,9 @@ export class AppWeb {
             ${import.meta.env.DEV ? '<button id="toggleDebugBtn" class="debug-link">Debug</button>' : ''}
           </div>
         </div>
+        ${state.evenNativeHostDetected
+          ? ''
+          : '<p class="host-warning host-warning-inline">Even native host missing. Glasses startup stays unavailable in this browser context.</p>'}
 
         <section class="codec-stage">
           <div class="codec-machine ${this.activeCodecGlitch ? `codec-glitch-${this.activeCodecGlitch}` : ''}">
@@ -452,6 +464,24 @@ export class AppWeb {
               <div class="codec-crt-layer"></div>
               <div class="scanlines"></div>
               <div class="codec-glitch-layer"></div>
+            </div>
+
+            <div class="codec-machine-rail">
+              <div class="codec-machine-summary">
+                <span class="section-label">Current Contact</span>
+                <strong>${escapeHtml(contact.name)}</strong>
+                <span>${escapeHtml(contact.code)} · ${escapeHtml(contact.frequency)}</span>
+              </div>
+              <div class="codec-machine-summary codec-machine-summary-center">
+                <span class="section-label">Channel State</span>
+                <strong>${escapeHtml(snapshot.stateLabel)}</strong>
+                <span>${escapeHtml(snapshot.speakerLabel)}</span>
+              </div>
+              <div class="codec-machine-summary codec-machine-summary-right">
+                <span class="section-label">Companion</span>
+                <strong>${escapeHtml(RIGHT_CHARACTER.name)}</strong>
+                <span>${state.started ? 'Bridge armed' : 'Waiting for startup'}</span>
+              </div>
             </div>
 
             <div class="codec-machine-top">
@@ -488,13 +518,15 @@ export class AppWeb {
             </div>
 
             <div class="codec-dialogue-deck">
-              <div class="codec-dialogue-head">
+              <div class="codec-dialogue-head codec-dialogue-head-compact">
+                <div>
+                  <span class="section-label">Live Dialogue</span>
+                  <div class="codec-dialogue-speaker-row">
+                    <span class="dialogue-speaker">${escapeHtml(snapshot.speakerLabel)}</span>
+                    <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
+                  </div>
+                </div>
                 <span class="codec-state-pill">${escapeHtml(snapshot.stateLabel)}</span>
-                <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
-              </div>
-              <div class="codec-dialogue-speaker-row">
-                <span class="dialogue-speaker">${escapeHtml(snapshot.speakerLabel)}</span>
-                <span class="codec-line-index">${escapeHtml(transcriptTitle)}</span>
               </div>
               <div class="dialogue-current-line">${escapeHtml(snapshot.currentLine)}</div>
               ${snapshot.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(snapshot.previousLine)}</div>` : ''}
@@ -506,7 +538,7 @@ export class AppWeb {
                   <div class="section-label">Transcript</div>
                   <h2>${transcriptTitle}</h2>
                 </div>
-                <p class="recent-exchange-copy">Chronological transcript stays available here while the active exchange stays above.</p>
+                <span class="codec-line-index">Latest 6 lines</span>
               </div>
 
               <div class="transcript-history codec-transcript-history">
@@ -518,6 +550,7 @@ export class AppWeb {
               <div class="codec-action-row">
                 <button id="${actions.primary.id}" class="primary-action codec-action-button">${actions.primary.label}</button>
                 <button id="${actions.secondary.id}" class="secondary-action codec-action-button">${actions.secondary.label}</button>
+                ${import.meta.env.DEV ? '<button id="toggleDebugBtnInline" class="secondary-action codec-action-button codec-action-button-debug">Debug</button>' : ''}
               </div>
             ` : ''}
           </div>
@@ -743,6 +776,17 @@ export class AppWeb {
     const toggleDebugBtn = document.querySelector<HTMLButtonElement>('#toggleDebugBtn');
     if (toggleDebugBtn) {
       toggleDebugBtn.onclick = () => {
+        if (this.store.getState().screen === 'debug') {
+          this.store.exitDebugScreen();
+        } else {
+          this.store.enterDebugScreen();
+        }
+      };
+    }
+
+    const toggleDebugBtnInline = document.querySelector<HTMLButtonElement>('#toggleDebugBtnInline');
+    if (toggleDebugBtnInline) {
+      toggleDebugBtnInline.onclick = () => {
         if (this.store.getState().screen === 'debug') {
           this.store.exitDebugScreen();
         } else {
