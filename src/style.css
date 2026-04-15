@@ -400,6 +400,24 @@ h1 {
   animation: codecGlitchConnect 180ms steps(3, end) 1;
 }
 
+.codec-machine.codec-signal-phase-flare .codec-glitch-layer,
+.codec-shell.codec-signal-phase-flare .codec-glitch-layer {
+  opacity: 0.9;
+  animation: codecGlitchConnect 100ms steps(3, end) 1;
+}
+
+.codec-machine.codec-signal-phase-decode .codec-glitch-layer,
+.codec-shell.codec-signal-phase-decode .codec-glitch-layer {
+  opacity: 0.58;
+  animation: codecGlitchSwitch 300ms steps(4, end) 1;
+}
+
+.codec-machine.codec-signal-phase-settle .codec-glitch-layer,
+.codec-shell.codec-signal-phase-settle .codec-glitch-layer {
+  opacity: 0.24;
+  animation: codecGlitchInterrupt 180ms steps(3, end) 1;
+}
+
 .codec-machine.codec-glitch-switch .codec-glitch-layer,
 .codec-shell.codec-glitch-switch .codec-glitch-layer {
   animation: codecGlitchSwitch 160ms steps(3, end) 1;
@@ -417,6 +435,16 @@ h1 {
 .codec-shell.codec-glitch-switch > :not(.codec-transmission-layers),
 .codec-shell.codec-glitch-interrupt > :not(.codec-transmission-layers) {
   animation: codecContentJitter 160ms steps(2, end) 1;
+}
+
+.codec-machine.codec-signal-phase-flare > :not(.codec-transmission-layers),
+.codec-shell.codec-signal-phase-flare > :not(.codec-transmission-layers) {
+  animation: codecContentJitter 120ms steps(2, end) 1;
+}
+
+.codec-machine.codec-signal-phase-decode > :not(.codec-transmission-layers),
+.codec-shell.codec-signal-phase-decode > :not(.codec-transmission-layers) {
+  animation: codecContentJitter 260ms steps(3, end) 1;
 }
 
 .codec-machine-top,
@@ -753,6 +781,25 @@ h1 {
   --portrait-state-static-opacity: var(--portrait-static-opacity-transition, 0.36);
   --portrait-state-static-band-opacity: var(--portrait-static-band-opacity-transition, 0.4);
   --portrait-state-static-band-speed: var(--portrait-static-band-speed-transition, 1100ms);
+}
+
+.codec-machine.codec-signal-phase-flare .portrait-frame.active,
+.codec-shell.codec-signal-phase-flare .portrait-frame.active {
+  --portrait-state-static-opacity: 0.48;
+  --portrait-state-static-band-opacity: 0.55;
+  --portrait-state-static-band-speed: 780ms;
+}
+
+.codec-machine.codec-signal-phase-decode .portrait-frame.active,
+.codec-shell.codec-signal-phase-decode .portrait-frame.active {
+  --portrait-state-static-opacity: 0.34;
+  --portrait-state-static-band-opacity: 0.4;
+  --portrait-state-static-band-speed: 980ms;
+}
+
+.codec-machine.codec-signal-phase-settle .portrait-glow-layer,
+.codec-shell.codec-signal-phase-settle .portrait-glow-layer {
+  opacity: 0.44;
 }
 
 .codec-machine.codec-glitch-connect .portrait-transition-burst,

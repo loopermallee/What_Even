@@ -10,6 +10,7 @@ import type {
   CodecPortraitFrameRect,
   CodecPortraitRuntimeFrameSlot,
   CodecTalkingMode,
+  ScriptedTalkCadence,
 } from '../../app/types';
 
 type AnimatedPortraitSide = {
@@ -34,6 +35,7 @@ export type CodecPortraitAnimationFrame = {
 type TalkController = {
   signature: string | null;
   sequenceIndex: number;
+  holdUntil: number;
 };
 
 type AnimatorOptions = {
@@ -41,18 +43,12 @@ type AnimatorOptions = {
 };
 
 const TICK_MS = 48;
-const TALK_MIN_STEP_MS = 96;
-const TALK_MAX_STEP_MS = 120;
 const SIGNAL_MIN_STEP_MS = 100;
 const SIGNAL_MAX_STEP_MS = 145;
 const TALK_SEQUENCE_BY_FAMILY: Record<CodecPortraitFamily, CodecPortraitRuntimeFrameSlot[]> = {
   neutral: ['idle', 'talk1', 'idle', 'talk2', 'idle'],
   alert: ['idle', 'talk1', 'idle', 'talk2', 'idle'],
 };
-
-function getNextTalkDelay() {
-  return TALK_MIN_STEP_MS + Math.floor(Math.random() * (TALK_MAX_STEP_MS - TALK_MIN_STEP_MS + 1));
-}
 
 function getNextSignalDelay() {
   return SIGNAL_MIN_STEP_MS + Math.floor(Math.random() * (SIGNAL_MAX_STEP_MS - SIGNAL_MIN_STEP_MS + 1));
@@ -115,7 +111,22 @@ function createTalkController(): TalkController {
   return {
     signature: null,
     sequenceIndex: 0,
+    holdUntil: 0,
   };
+}
+
+function getCadenceWindowMs(cadence: ScriptedTalkCadence | undefined) {
+  if (cadence === 'staccato') {
+    return { pre: 48, post: 120, minStep: 82, maxStep: 104 };
+  }
+  if (cadence === 'urgent') {
+    return { pre: 56, post: 136, minStep: 88, maxStep: 112 };
+  }
+  if (cadence === 'measured') {
+    return { pre: 90, post: 190, minStep: 106, maxStep: 134 };
+  }
+
+  return { pre: 78, post: 160, minStep: 94, maxStep: 120 };
 }
 
 function getTalkSignature(side: CodecPortraitScene['left']) {
@@ -183,6 +194,8 @@ export class CodecPortraitAnimator {
     if (previousTalkingMode !== scene.talkingMode || previousSpeakerSide !== scene.activeSpeakerSide) {
       this.nextTalkAt = 0;
       this.nextSignalAt = 0;
+      this.talk.left.holdUntil = Date.now() + getCadenceWindowMs(scene.currentLineMetadata?.cadence).pre;
+      this.talk.right.holdUntil = this.talk.left.holdUntil;
     }
 
     const nextFrame: CodecPortraitAnimationFrame = {
@@ -253,8 +266,9 @@ export class CodecPortraitAnimator {
     const talkingSide = this.scene.activeSpeakerSide;
 
     if (this.scene.talkingMode !== 'silent' && talkingSide && now >= this.nextTalkAt) {
+      const cadence = getCadenceWindowMs(this.scene.currentLineMetadata?.cadence);
       dirty = this.advanceTalkFrame(talkingSide) || dirty;
-      this.nextTalkAt = now + getNextTalkDelay();
+      this.nextTalkAt = now + cadence.minStep + Math.floor(Math.random() * Math.max(1, cadence.maxStep - cadence.minStep));
     }
 
     if (this.scene.talkingMode !== 'silent' && now >= this.nextSignalAt) {
@@ -288,6 +302,13 @@ export class CodecPortraitAnimator {
     if (controller.signature !== signature) {
       controller.signature = signature;
       controller.sequenceIndex = 0;
+      controller.holdUntil = Date.now() + getCadenceWindowMs(this.scene.currentLineMetadata?.cadence).pre;
+      return false;
+    }
+
+    const now = Date.now();
+    if (now < controller.holdUntil) {
+      return false;
     }
 
     const sequence = TALK_SEQUENCE_BY_FAMILY[sceneSide.family];
@@ -305,6 +326,9 @@ export class CodecPortraitAnimator {
       ...this.frame,
       [side]: nextSide,
     };
+    if (slot === 'idle') {
+      controller.holdUntil = Date.now() + getCadenceWindowMs(this.scene.currentLineMetadata?.cadence).post;
+    }
     return true;
   }
 }
