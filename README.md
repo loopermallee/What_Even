@@ -38,6 +38,7 @@ Default behavior (recommended):
 
 - Frontend uses same-origin `POST /api/stt/auth`.
 - In local Vite dev, `/api/stt/auth` is proxied to `http://localhost:8787` by default.
+- On Vercel, the same `/api/stt/auth` path is served by the serverless function in `api/stt/auth.ts`, so production no longer needs `npm run broker`.
 
 ### Run locally
 
@@ -53,6 +54,13 @@ Terminal 2 (web app):
 npm run dev
 ```
 
+### Run on Vercel
+
+- Keep the frontend on same-origin `POST /api/stt/auth`.
+- Add `DEEPGRAM_API_KEY` to the Vercel project's environment variables.
+- Optional broker env vars below can also be set in Vercel if you want non-default timeout, TTL, rate limit, or cross-origin allowlist behavior.
+- No separate production broker process is required.
+
 ### Broker security behavior
 
 - `Cache-Control: no-store` on auth responses.
@@ -63,6 +71,7 @@ npm run dev
   - `STT_BROKER_RATE_LIMIT_WINDOW_MS`
   - `STT_BROKER_RATE_LIMIT_MAX`
 - Upstream timeout enforced via `STT_BROKER_TIMEOUT_MS`.
+- Production implementation lives in [`api/stt/auth.ts`](api/stt/auth.ts); local broker remains available at [`server/sttBroker.mjs`](server/sttBroker.mjs).
 
 ### Optional broker env vars
 
