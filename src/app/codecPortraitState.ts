@@ -1,10 +1,11 @@
 import { CONTACTS, RIGHT_CHARACTER } from './contacts';
 import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from './presentation';
-import { resolveCodecExpression } from './portraitExpression';
+import { resolveCodecExpression, resolveCodecPortraitFamily } from './portraitExpression';
 import type {
   AppState,
   CodecCharacterId,
   CodecExpression,
+  CodecPortraitFamily,
   CodecTalkingMode,
   SpeakerSide,
   TranscriptEntry,
@@ -17,6 +18,7 @@ export type CodecPortraitSideState = {
   characterId?: CodecCharacterId;
   active: boolean;
   expression: CodecExpression;
+  family: CodecPortraitFamily;
   role: TranscriptEntry['role'] | null;
   entryId: number | null;
 };
@@ -110,6 +112,7 @@ function buildSideState(options: {
   characterId?: CodecCharacterId;
   active: boolean;
   expression: CodecExpression;
+  family: CodecPortraitFamily;
   role: TranscriptEntry['role'] | null;
   entryId: number | null;
 }): CodecPortraitSideState {
@@ -120,6 +123,7 @@ function buildSideState(options: {
     characterId: options.characterId,
     active: options.active,
     expression: options.expression,
+    family: options.family,
     role: options.role,
     entryId: options.entryId,
   };
@@ -221,6 +225,7 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
     role: expressionRole,
     fallback: activeSpeakerSide === 'right' ? 'stern' : 'idle',
   });
+  const activeFamily = resolveCodecPortraitFamily(activeExpression);
 
   const left = buildSideState({
     side: 'left',
@@ -229,6 +234,7 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
     characterId: contact.characterId,
     active: activeSpeakerSide === 'left',
     expression: activeSpeakerSide === 'left' ? activeExpression : 'idle',
+    family: activeSpeakerSide === 'left' ? activeFamily : 'neutral',
     role: activeSpeakerSide === 'left' ? expressionRole : null,
     entryId: activeSpeakerSide === 'left' ? currentEntry?.id ?? state.speechWindow.entryId : null,
   });
@@ -240,6 +246,7 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
     characterId: RIGHT_CHARACTER.characterId,
     active: activeSpeakerSide === 'right',
     expression: activeSpeakerSide === 'right' ? activeExpression : 'stern',
+    family: activeSpeakerSide === 'right' ? activeFamily : 'neutral',
     role: activeSpeakerSide === 'right' ? expressionRole : null,
     entryId: activeSpeakerSide === 'right' ? currentEntry?.id ?? state.speechWindow.entryId : null,
   });

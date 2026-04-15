@@ -1,4 +1,4 @@
-import type { CodecExpression, TranscriptEntry } from './types';
+import type { CodecExpression, CodecPortraitFamily, TranscriptEntry } from './types';
 
 type ExpressionResolutionInput = {
   text: string;
@@ -59,6 +59,12 @@ function getFallbackExpression(role?: TranscriptEntry['role'] | null, fallback: 
   }
 
   return 'idle';
+}
+
+export function resolveCodecPortraitFamily(expression: CodecExpression): CodecPortraitFamily {
+  return expression === 'angry' || expression === 'surprised' || expression === 'hurt'
+    ? 'alert'
+    : 'neutral';
 }
 
 export function resolveCodecExpression(input: ExpressionResolutionInput): CodecExpression {

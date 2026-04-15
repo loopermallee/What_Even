@@ -1,8 +1,19 @@
 export type SpeakerSide = 'left' | 'right';
 export type CodecCharacterId = 'snake' | 'otacon' | 'meryl' | 'colonel';
 export type CodecExpression = 'idle' | 'stern' | 'angry' | 'surprised' | 'thinking' | 'hurt';
-export type CodecBlinkState = 'open' | 'closing' | 'closed' | 'opening';
-export type CodecMouthFrame = 'closed' | 'half' | 'open';
+export type CodecPortraitFamily = 'neutral' | 'alert';
+export type CodecPortraitRuntimeFrameSlot = 'idle' | 'talk1' | 'talk2';
+export type CodecPortraitSpecialFrameSlot = 'helmet' | 'closeup' | 'misc' | 'masked' | 'profile';
+export type CodecPortraitFrameKey =
+  | `${CodecCharacterId}.neutral.${CodecPortraitRuntimeFrameSlot}`
+  | `${CodecCharacterId}.alert.${CodecPortraitRuntimeFrameSlot}`
+  | `${CodecCharacterId}.special.${CodecPortraitSpecialFrameSlot}`;
+export type CodecPortraitFrameRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 export type CodecTalkingMode = 'silent' | 'scripted_text' | 'live_audio';
 export type SpeechWindowSource = 'none' | 'scripted_text' | 'live_audio';
 

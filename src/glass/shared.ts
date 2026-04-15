@@ -248,8 +248,8 @@ export function getPreviousTranscriptEntry(state: AppState, index: number) {
   return state.transcript[index - 1] ?? null;
 }
 
-function toGlassExpressionBucket(expression: ReturnType<typeof resolveCodecPortraitState>['left']['expression']): GlassPortraitExpressionBucket {
-  return expression === 'angry' || expression === 'surprised' ? 'alert' : 'default';
+function toGlassExpressionBucket(family: ReturnType<typeof resolveCodecPortraitState>['left']['family']): GlassPortraitExpressionBucket {
+  return family === 'alert' ? 'alert' : 'default';
 }
 
 function appendExpressionBucketToAsset(base: PortraitAssetBase, bucket: GlassPortraitExpressionBucket): PortraitAsset {
@@ -276,12 +276,10 @@ function getGlassPortraitBase(state: AppState, speakerSide: SpeakerSide | null) 
 export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
   const scene = resolveCodecPortraitState(state);
   const portraitAssetBase = getGlassPortraitBase(state, scene.activeSpeakerSide);
-  const activeExpression = scene.activeSpeakerSide === 'right'
-    ? scene.right.expression
-    : scene.left.expression;
-  const expressionBucket = scene.talkingMode === 'live_audio'
-    ? 'default'
-    : toGlassExpressionBucket(activeExpression);
+  const activeFamily = scene.activeSpeakerSide === 'right'
+    ? scene.right.family
+    : scene.left.family;
+  const expressionBucket = toGlassExpressionBucket(activeFamily);
   const portraitAsset = appendExpressionBucketToAsset(portraitAssetBase, expressionBucket);
   const isTalking = scene.talkingMode !== 'silent' && scene.currentRole !== 'system';
   const liveAudioBucket = clampBarBucket(3 + Math.round(scene.listeningActivityLevel * 5));

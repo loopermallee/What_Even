@@ -1,14 +1,31 @@
 import { toPortraitCssVars } from '../lib/codecPortraitFx';
-import type { CodecBlinkState, CodecCharacterId, CodecExpression, CodecMouthFrame } from '../../app/types';
+import type {
+  CodecCharacterId,
+  CodecExpression,
+  CodecPortraitFamily,
+  CodecPortraitFrameKey,
+  CodecPortraitFrameRect,
+} from '../../app/types';
+
+function formatFrameRect(frameRect: CodecPortraitFrameRect | null) {
+  if (!frameRect) {
+    return '';
+  }
+
+  return `${frameRect.x},${frameRect.y},${frameRect.width},${frameRect.height}`;
+}
 
 export function renderCodecPortrait(options: {
   label: string;
   tag: string;
   characterId?: CodecCharacterId;
   active: boolean;
+  portraitState: 'idle' | 'speaking';
   expression: CodecExpression;
-  blink: CodecBlinkState;
-  mouth: CodecMouthFrame;
+  family: CodecPortraitFamily;
+  frameKey: CodecPortraitFrameKey | null;
+  frameRect: CodecPortraitFrameRect | null;
+  usesManifestFrame: boolean;
 }) {
   const spriteCharacter = options.characterId === 'snake'
     || options.characterId === 'otacon'
@@ -17,8 +34,6 @@ export function renderCodecPortrait(options: {
     ? options.characterId
     : '';
 
-  const portraitState = options.active && options.mouth !== 'closed' ? 'speaking' : 'idle';
-
   return `
     <div class="portrait-frame ${options.active ? 'active' : ''}" style="${toPortraitCssVars()}">
       <div class="portrait-header">
@@ -26,11 +41,14 @@ export function renderCodecPortrait(options: {
       </div>
       <div
         class="portrait-face ${spriteCharacter ? 'portrait-face-sprite-capable' : ''}"
-        data-portrait-state="${portraitState}"
+        data-portrait-state="${options.portraitState}"
         data-portrait-character="${spriteCharacter}"
         data-portrait-expression="${options.expression}"
+        data-portrait-family="${options.family}"
         data-codec-sprite-character="${spriteCharacter}"
-        data-codec-sprite-expression="${options.expression}"
+        data-codec-sprite-frame-key="${options.frameKey ?? ''}"
+        data-codec-sprite-frame-rect="${formatFrameRect(options.frameRect)}"
+        data-codec-sprite-uses-manifest="${options.usesManifestFrame ? 'true' : 'false'}"
       >
         <div class="portrait-viewport">
           <div class="portrait-silhouette">${options.tag}</div>
@@ -38,14 +56,6 @@ export function renderCodecPortrait(options: {
           <div class="portrait-grade-layer" aria-hidden="true"></div>
           <div class="portrait-scanline-layer" aria-hidden="true"></div>
           <div class="portrait-radio-layer" aria-hidden="true"></div>
-          <div class="portrait-expression-layer portrait-expression-${options.expression}" aria-hidden="true"></div>
-          <div class="portrait-eyes-layer" data-blink-state="${options.blink}" aria-hidden="true">
-            <span class="portrait-eye portrait-eye-left"></span>
-            <span class="portrait-eye portrait-eye-right"></span>
-          </div>
-          <div class="portrait-mouth-layer" data-mouth-frame="${options.mouth}" aria-hidden="true">
-            <span class="portrait-mouth-core"></span>
-          </div>
           <div class="portrait-static-overlay" aria-hidden="true">
             <div class="portrait-static-band"></div>
             <div class="portrait-interference-sweep"></div>

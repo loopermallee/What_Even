@@ -1,3 +1,9 @@
+import {
+  getCodecPortraitFrameWithFallback,
+  getCodecPortraitManifest,
+} from './app/codecPortraitManifest';
+import type { CodecCharacterId, CodecPortraitFrameKey } from './app/types';
+
 export type CodecAssetKey =
   | 'frame-incoming'
   | 'frame-active'
@@ -12,11 +18,17 @@ export type CodecAssetKey =
   | 'portrait-snake-alert';
 
 const assetCache = new Map<CodecAssetKey, Uint8Array>();
+const sheetCache = new Map<CodecCharacterId, Promise<HTMLImageElement>>();
 
-type AssetDefinition = {
+type FrameAssetDefinition = {
   width: number;
   height: number;
   svg: string;
+};
+
+type PortraitAssetDefinition = {
+  characterId: CodecCharacterId;
+  frameKey: CodecPortraitFrameKey;
 };
 
 function frameSvg(mode: 'incoming' | 'active' | 'ended') {
@@ -39,26 +51,7 @@ function frameSvg(mode: 'incoming' | 'active' | 'ended') {
 </svg>`;
 }
 
-function portraitSvg(label: string, variant: 'default' | 'alert' = 'default') {
-  const stroke = variant === 'alert' ? '#c7ff86' : '#a2ffd1';
-  const faceFill = variant === 'alert' ? '#c7ff86' : '#93e7c1';
-  const panelFill = variant === 'alert' ? '#13210a' : '#0a2118';
-  const alertBand = variant === 'alert'
-    ? '<rect x="9" y="10" width="78" height="8" fill="#c7ff86" opacity="0.14"/><rect x="9" y="78" width="78" height="6" fill="#c7ff86" opacity="0.12"/>'
-    : '';
-  return `
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
-  <rect width="96" height="96" fill="#06130d"/>
-  <rect x="1" y="1" width="94" height="94" fill="none" stroke="${stroke}" stroke-width="2"/>
-  <rect x="5" y="5" width="86" height="86" fill="${panelFill}"/>
-  ${alertBand}
-  <ellipse cx="48" cy="40" rx="22" ry="18" fill="${faceFill}" opacity="0.28"/>
-  <rect x="35" y="57" width="26" height="16" fill="${faceFill}" opacity="0.2"/>
-  <text x="48" y="52" text-anchor="middle" fill="#c8ffe6" font-size="18" font-family="monospace">${label}</text>
-</svg>`;
-}
-
-function getAssetDefinition(key: CodecAssetKey): AssetDefinition {
+function getFrameAssetDefinition(key: CodecAssetKey): FrameAssetDefinition | null {
   if (key === 'frame-incoming') {
     return { width: 200, height: 100, svg: frameSvg('incoming') };
   }
@@ -71,35 +64,56 @@ function getAssetDefinition(key: CodecAssetKey): AssetDefinition {
     return { width: 200, height: 100, svg: frameSvg('ended') };
   }
 
+  return null;
+}
+
+function getPortraitAssetDefinition(key: CodecAssetKey): PortraitAssetDefinition | null {
   if (key === 'portrait-snake') {
-    return { width: 96, height: 96, svg: portraitSvg('SN') };
+    return { characterId: 'snake', frameKey: 'snake.neutral.idle' };
   }
-
   if (key === 'portrait-snake-alert') {
-    return { width: 96, height: 96, svg: portraitSvg('SN', 'alert') };
+    return { characterId: 'snake', frameKey: 'snake.alert.idle' };
   }
-
   if (key === 'portrait-colonel') {
-    return { width: 96, height: 96, svg: portraitSvg('CO') };
+    return { characterId: 'colonel', frameKey: 'colonel.neutral.idle' };
   }
-
   if (key === 'portrait-colonel-alert') {
-    return { width: 96, height: 96, svg: portraitSvg('CO', 'alert') };
+    return { characterId: 'colonel', frameKey: 'colonel.alert.idle' };
   }
-
   if (key === 'portrait-meryl') {
-    return { width: 96, height: 96, svg: portraitSvg('MR') };
+    return { characterId: 'meryl', frameKey: 'meryl.neutral.idle' };
   }
-
   if (key === 'portrait-meryl-alert') {
-    return { width: 96, height: 96, svg: portraitSvg('MR', 'alert') };
+    return { characterId: 'meryl', frameKey: 'meryl.alert.idle' };
   }
-
+  if (key === 'portrait-otacon') {
+    return { characterId: 'otacon', frameKey: 'otacon.neutral.idle' };
+  }
   if (key === 'portrait-otacon-alert') {
-    return { width: 96, height: 96, svg: portraitSvg('OT', 'alert') };
+    return { characterId: 'otacon', frameKey: 'otacon.alert.idle' };
   }
 
-  return { width: 96, height: 96, svg: portraitSvg('OT') };
+  return null;
+}
+
+function loadImage(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Failed to load portrait sheet: ${url}`));
+    image.src = url;
+  });
+}
+
+function getSpriteSheet(characterId: CodecCharacterId) {
+  const cached = sheetCache.get(characterId);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = loadImage(getCodecPortraitManifest(characterId).sheetUrl);
+  sheetCache.set(characterId, promise);
+  return promise;
 }
 
 async function svgToPngBytes(svg: string, width: number, height: number) {
@@ -135,11 +149,67 @@ async function svgToPngBytes(svg: string, width: number, height: number) {
       }, 'image/png');
     });
 
-    const bytes = new Uint8Array(await pngBlob.arrayBuffer());
-    return bytes;
+    return new Uint8Array(await pngBlob.arrayBuffer());
   } finally {
     URL.revokeObjectURL(svgUrl);
   }
+}
+
+async function renderPortraitPngBytes(definition: PortraitAssetDefinition) {
+  const resolvedFrame = getCodecPortraitFrameWithFallback({
+    characterId: definition.characterId,
+    family: definition.frameKey.includes('.alert.') ? 'alert' : 'neutral',
+    frameKey: definition.frameKey,
+  });
+  if (!resolvedFrame) {
+    throw new Error(`No portrait frame found for ${definition.frameKey}.`);
+  }
+
+  const image = await getSpriteSheet(definition.characterId);
+  const crop = getCodecPortraitManifest(definition.characterId).glassCrop;
+  const canvas = document.createElement('canvas');
+  canvas.width = 96;
+  canvas.height = 96;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Canvas 2D context unavailable for portrait rendering.');
+  }
+
+  context.imageSmoothingEnabled = false;
+  context.fillStyle = '#000000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const scale = Math.max(canvas.width / resolvedFrame.rect.width, canvas.height / resolvedFrame.rect.height) * crop.zoom;
+  const drawWidth = Math.ceil(resolvedFrame.rect.width * scale);
+  const drawHeight = Math.ceil(resolvedFrame.rect.height * scale);
+  const drawX = Math.round((canvas.width - drawWidth) / 2 + crop.offsetX);
+  const drawY = Math.round((canvas.height - drawHeight) / 2 + crop.offsetY);
+
+  context.drawImage(
+    image,
+    resolvedFrame.rect.x,
+    resolvedFrame.rect.y,
+    resolvedFrame.rect.width,
+    resolvedFrame.rect.height,
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight,
+  );
+
+  const pngBlob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('PNG blob generation failed.'));
+        return;
+      }
+
+      resolve(blob);
+    }, 'image/png');
+  });
+
+  return new Uint8Array(await pngBlob.arrayBuffer());
 }
 
 export async function getCodecAssetBytes(key: CodecAssetKey) {
@@ -148,8 +218,19 @@ export async function getCodecAssetBytes(key: CodecAssetKey) {
     return cached;
   }
 
-  const asset = getAssetDefinition(key);
-  const bytes = await svgToPngBytes(asset.svg, asset.width, asset.height);
+  const frameAsset = getFrameAssetDefinition(key);
+  if (frameAsset) {
+    const bytes = await svgToPngBytes(frameAsset.svg, frameAsset.width, frameAsset.height);
+    assetCache.set(key, bytes);
+    return bytes;
+  }
+
+  const portraitAsset = getPortraitAssetDefinition(key);
+  if (!portraitAsset) {
+    throw new Error(`Unknown codec asset key: ${key}`);
+  }
+
+  const bytes = await renderPortraitPngBytes(portraitAsset);
   assetCache.set(key, bytes);
   return bytes;
 }

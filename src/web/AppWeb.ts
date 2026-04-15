@@ -2,6 +2,7 @@ import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
 import { resolveCodecPortraitState, type CodecPortraitScene } from '../app/codecPortraitState';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
+import { resolveCodecPortraitFamily } from '../app/portraitExpression';
 import {
   LifecycleRaceHarness,
   type LifecycleRaceScenarioId,
@@ -32,6 +33,14 @@ function escapeHtml(text: string) {
     .replaceAll("'", '&#39;');
 }
 
+function formatFrameRect(frameRect: CodecPortraitAnimationFrame['left']['frameRect']) {
+  if (!frameRect) {
+    return '';
+  }
+
+  return `${frameRect.x},${frameRect.y},${frameRect.width},${frameRect.height}`;
+}
+
 type UserActionConfig = {
   primary: { id: string; label: string };
   secondary: { id: string; label: string };
@@ -40,10 +49,8 @@ type UserActionConfig = {
 type CodecAnimatedDomNodes = {
   leftFrame: HTMLElement | null;
   rightFrame: HTMLElement | null;
-  leftEyes: HTMLElement | null;
-  rightEyes: HTMLElement | null;
-  leftMouth: HTMLElement | null;
-  rightMouth: HTMLElement | null;
+  leftFace: HTMLElement | null;
+  rightFace: HTMLElement | null;
   signalBars: HTMLElement | null;
 };
 
@@ -75,15 +82,19 @@ type FxDebugSnapshot = {
   left: {
     active: boolean;
     expression: CodecPortraitAnimationFrame['left']['expression'];
-    blink: CodecPortraitAnimationFrame['left']['blink'];
-    mouth: CodecPortraitAnimationFrame['left']['mouth'];
+    family: CodecPortraitAnimationFrame['left']['family'];
+    frameKey: CodecPortraitAnimationFrame['left']['frameKey'];
+    frameRect: CodecPortraitAnimationFrame['left']['frameRect'];
+    usesManifestFrame: CodecPortraitAnimationFrame['left']['usesManifestFrame'];
     portraitState: 'idle' | 'speaking';
   };
   right: {
     active: boolean;
     expression: CodecPortraitAnimationFrame['right']['expression'];
-    blink: CodecPortraitAnimationFrame['right']['blink'];
-    mouth: CodecPortraitAnimationFrame['right']['mouth'];
+    family: CodecPortraitAnimationFrame['right']['family'];
+    frameKey: CodecPortraitAnimationFrame['right']['frameKey'];
+    frameRect: CodecPortraitAnimationFrame['right']['frameRect'];
+    usesManifestFrame: CodecPortraitAnimationFrame['right']['usesManifestFrame'];
     portraitState: 'idle' | 'speaking';
   };
   domHooks: {
@@ -91,10 +102,14 @@ type FxDebugSnapshot = {
     rightState: string | null;
     leftExpression: string | null;
     rightExpression: string | null;
-    leftBlink: string | null;
-    rightBlink: string | null;
-    leftMouth: string | null;
-    rightMouth: string | null;
+    leftFamily: string | null;
+    rightFamily: string | null;
+    leftFrameKey: string | null;
+    rightFrameKey: string | null;
+    leftFrameRect: string | null;
+    rightFrameRect: string | null;
+    leftUsesManifest: string | null;
+    rightUsesManifest: string | null;
   };
   layersMounted: {
     portraitFrames: number;
@@ -272,10 +287,8 @@ export class AppWeb {
   private animatedNodes: CodecAnimatedDomNodes = {
     leftFrame: null,
     rightFrame: null,
-    leftEyes: null,
-    rightEyes: null,
-    leftMouth: null,
-    rightMouth: null,
+    leftFace: null,
+    rightFace: null,
     signalBars: null,
   };
 
@@ -334,10 +347,8 @@ export class AppWeb {
     this.animatedNodes = {
       leftFrame: null,
       rightFrame: null,
-      leftEyes: null,
-      rightEyes: null,
-      leftMouth: null,
-      rightMouth: null,
+      leftFace: null,
+      rightFace: null,
       signalBars: null,
     };
     this.store.cancelSpeechWindow();
@@ -370,10 +381,8 @@ export class AppWeb {
       this.animatedNodes = {
         leftFrame: null,
         rightFrame: null,
-        leftEyes: null,
-        rightEyes: null,
-        leftMouth: null,
-        rightMouth: null,
+        leftFace: null,
+        rightFace: null,
         signalBars: null,
       };
     } else {
@@ -452,8 +461,12 @@ export class AppWeb {
     const demoLine = this.fxDemoMode === 'transition'
       ? 'FX demo holds the stronger transition state so you can verify burst and static escalation.'
       : this.fxDemoMode === 'speaking'
-        ? 'FX demo forces scripted speaking so stepped mouth and quantized bars stay visible in a regular browser.'
+        ? 'FX demo forces scripted speaking so stepped sprite swaps and quantized bars stay visible in a regular browser.'
         : 'FX demo holds an idle portrait so restrained motion remains visible without host or STT activity.';
+    const demoLeftExpression = demoLeftActive ? demoExpression : 'idle';
+    const demoRightExpression = demoRightActive
+      ? (this.fxDemoMode === 'transition' ? 'angry' : 'stern')
+      : 'stern';
 
     return {
       ...scene,
@@ -472,16 +485,16 @@ export class AppWeb {
       left: {
         ...scene.left,
         active: demoLeftActive,
-        expression: demoLeftActive ? demoExpression : 'idle',
+        expression: demoLeftExpression,
+        family: resolveCodecPortraitFamily(demoLeftExpression),
         role: demoLeftActive ? 'contact' : null,
         entryId: null,
       },
       right: {
         ...scene.right,
         active: demoRightActive,
-        expression: demoRightActive
-          ? (this.fxDemoMode === 'transition' ? 'angry' : 'stern')
-          : 'stern',
+        expression: demoRightExpression,
+        family: resolveCodecPortraitFamily(demoRightExpression),
         role: demoRightActive ? 'user' : null,
         entryId: null,
       },
@@ -603,26 +616,34 @@ export class AppWeb {
       left: {
         active: animationFrame.left.active,
         expression: animationFrame.left.expression,
-        blink: animationFrame.left.blink,
-        mouth: animationFrame.left.mouth,
-        portraitState: animationFrame.left.active && animationFrame.left.mouth !== 'closed' ? 'speaking' : 'idle',
+        family: animationFrame.left.family,
+        frameKey: animationFrame.left.frameKey,
+        frameRect: animationFrame.left.frameRect,
+        usesManifestFrame: animationFrame.left.usesManifestFrame,
+        portraitState: animationFrame.left.portraitState,
       },
       right: {
         active: animationFrame.right.active,
         expression: animationFrame.right.expression,
-        blink: animationFrame.right.blink,
-        mouth: animationFrame.right.mouth,
-        portraitState: animationFrame.right.active && animationFrame.right.mouth !== 'closed' ? 'speaking' : 'idle',
+        family: animationFrame.right.family,
+        frameKey: animationFrame.right.frameKey,
+        frameRect: animationFrame.right.frameRect,
+        usesManifestFrame: animationFrame.right.usesManifestFrame,
+        portraitState: animationFrame.right.portraitState,
       },
       domHooks: {
         leftState: leftFace?.dataset.portraitState ?? null,
         rightState: rightFace?.dataset.portraitState ?? null,
         leftExpression: leftFace?.dataset.portraitExpression ?? null,
         rightExpression: rightFace?.dataset.portraitExpression ?? null,
-        leftBlink: this.animatedNodes.leftEyes?.dataset.blinkState ?? null,
-        rightBlink: this.animatedNodes.rightEyes?.dataset.blinkState ?? null,
-        leftMouth: this.animatedNodes.leftMouth?.dataset.mouthFrame ?? null,
-        rightMouth: this.animatedNodes.rightMouth?.dataset.mouthFrame ?? null,
+        leftFamily: leftFace?.dataset.portraitFamily ?? null,
+        rightFamily: rightFace?.dataset.portraitFamily ?? null,
+        leftFrameKey: leftFace?.dataset.codecSpriteFrameKey ?? null,
+        rightFrameKey: rightFace?.dataset.codecSpriteFrameKey ?? null,
+        leftFrameRect: leftFace?.dataset.codecSpriteFrameRect ?? null,
+        rightFrameRect: rightFace?.dataset.codecSpriteFrameRect ?? null,
+        leftUsesManifest: leftFace?.dataset.codecSpriteUsesManifest ?? null,
+        rightUsesManifest: rightFace?.dataset.codecSpriteUsesManifest ?? null,
       },
       layersMounted: {
         portraitFrames: root.querySelectorAll('.portrait-frame').length,
@@ -666,18 +687,24 @@ export class AppWeb {
       tag: contact.portraitTag,
       characterId: contact.characterId,
       active: animationFrame.left.active,
+      portraitState: animationFrame.left.portraitState,
       expression: animationFrame.left.expression,
-      blink: animationFrame.left.blink,
-      mouth: animationFrame.left.mouth,
+      family: animationFrame.left.family,
+      frameKey: animationFrame.left.frameKey,
+      frameRect: animationFrame.left.frameRect,
+      usesManifestFrame: animationFrame.left.usesManifestFrame,
     });
     const rightPortrait = renderCodecPortrait({
       label: RIGHT_CHARACTER.name.toUpperCase(),
       tag: RIGHT_CHARACTER.portraitTag,
       characterId: RIGHT_CHARACTER.characterId,
       active: animationFrame.right.active,
+      portraitState: animationFrame.right.portraitState,
       expression: animationFrame.right.expression,
-      blink: animationFrame.right.blink,
-      mouth: animationFrame.right.mouth,
+      family: animationFrame.right.family,
+      frameKey: animationFrame.right.frameKey,
+      frameRect: animationFrame.right.frameRect,
+      usesManifestFrame: animationFrame.right.usesManifestFrame,
     });
 
     return `
@@ -944,10 +971,8 @@ export class AppWeb {
     this.animatedNodes = {
       leftFrame: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-frame'),
       rightFrame: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-frame'),
-      leftEyes: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-eyes-layer'),
-      rightEyes: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-eyes-layer'),
-      leftMouth: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-mouth-layer'),
-      rightMouth: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-mouth-layer'),
+      leftFace: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-face'),
+      rightFace: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-face'),
       signalBars: root.querySelector<HTMLElement>('.signal-bars'),
     };
   }
@@ -956,10 +981,8 @@ export class AppWeb {
     const {
       leftFrame,
       rightFrame,
-      leftEyes,
-      rightEyes,
-      leftMouth,
-      rightMouth,
+      leftFace,
+      rightFace,
       signalBars,
     } = this.animatedNodes;
 
@@ -970,22 +993,29 @@ export class AppWeb {
       rightFrame.classList.toggle('active', frame.right.active);
     }
 
-    if (leftEyes) {
-      leftEyes.dataset.blinkState = frame.left.blink;
+    if (leftFace) {
+      leftFace.dataset.portraitState = frame.left.portraitState;
+      leftFace.dataset.portraitExpression = frame.left.expression;
+      leftFace.dataset.portraitFamily = frame.left.family;
+      leftFace.dataset.codecSpriteFrameKey = frame.left.frameKey ?? '';
+      leftFace.dataset.codecSpriteFrameRect = formatFrameRect(frame.left.frameRect);
+      leftFace.dataset.codecSpriteUsesManifest = frame.left.usesManifestFrame ? 'true' : 'false';
     }
-    if (rightEyes) {
-      rightEyes.dataset.blinkState = frame.right.blink;
-    }
-
-    if (leftMouth) {
-      leftMouth.dataset.mouthFrame = frame.left.mouth;
-    }
-    if (rightMouth) {
-      rightMouth.dataset.mouthFrame = frame.right.mouth;
+    if (rightFace) {
+      rightFace.dataset.portraitState = frame.right.portraitState;
+      rightFace.dataset.portraitExpression = frame.right.expression;
+      rightFace.dataset.portraitFamily = frame.right.family;
+      rightFace.dataset.codecSpriteFrameKey = frame.right.frameKey ?? '';
+      rightFace.dataset.codecSpriteFrameRect = formatFrameRect(frame.right.frameRect);
+      rightFace.dataset.codecSpriteUsesManifest = frame.right.usesManifestFrame ? 'true' : 'false';
     }
 
     if (signalBars) {
       signalBars.innerHTML = renderSignalBars(frame.barBucket);
+    }
+
+    if (leftFace || rightFace) {
+      syncCodecSpritePortraits(document);
     }
 
     if (
