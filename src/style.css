@@ -462,7 +462,15 @@ h1 {
   letter-spacing: 0.14em;
 }
 
-.codec-portrait-bay-right,
+.codec-portrait-bay-right {
+  text-align: right;
+}
+
+.codec-portrait-bay-right .portrait-frame {
+  justify-self: stretch;
+  width: 100%;
+}
+
 .codec-portrait-meta-user {
   justify-items: end;
   text-align: right;
@@ -1630,9 +1638,7 @@ h1 {
     justify-content: flex-start;
   }
 
-  .codec-portrait-bay-right,
-  .codec-portrait-meta-user {
-    justify-items: end;
+  .codec-portrait-bay-right {
     text-align: right;
   }
 
