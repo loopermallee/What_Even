@@ -1,5 +1,6 @@
 import { CONTACTS } from './contacts';
 import { generateDeterministicResponse } from './responseEngine';
+import { createScriptedTranscriptTurns, getScriptedScenarioById } from './scriptedScenarios';
 import { hasEvenNativeHost } from '../bridge/nativeHost';
 import type {
   AudioCaptureStatus,
@@ -12,6 +13,7 @@ import type {
   ReliabilityDebugInfo,
   SpeechWindowState,
   SttStatus,
+  ScriptedLineMetadata,
   TranscriptEntry,
   TurnState,
 } from './types';
@@ -132,6 +134,16 @@ function getLatestTranscriptCursor(transcript: TranscriptEntry[]) {
   return transcript.length > 0 ? transcript.length - 1 : -1;
 }
 
+function createInitialScriptedState() {
+  return {
+    scriptedScenarioId: null as string | null,
+    scriptedScenarioTitle: null as string | null,
+    scriptedLineEntryIds: [] as number[],
+    scriptedLineMetadataByEntryId: {} as Record<number, ScriptedLineMetadata>,
+    scriptedAutoplay: false,
+  };
+}
+
 export function createInitialState(): AppState {
   return {
     screen: 'contacts',
@@ -147,6 +159,7 @@ export function createInitialState(): AppState {
     dialogueIndex: -1,
     activeTranscriptCursor: -1,
     transcript: [],
+    ...createInitialScriptedState(),
     ...createInitialTurnState(),
     deviceLifecycleState: readDevicePageLifecycleState(),
     evenStartupStatus: 'idle',
@@ -428,6 +441,7 @@ export class AppStore {
       selectedContactIndex: normalized,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
       speechWindow: createInitialSpeechWindowState(),
+      ...createInitialScriptedState(),
       ...this.clearTurnWorkForBoundary('idle'),
     });
   }
@@ -524,6 +538,7 @@ export class AppStore {
       dialogueIndex: -1,
       activeTranscriptCursor: -1,
       transcript: [],
+      ...createInitialScriptedState(),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
@@ -559,6 +574,7 @@ export class AppStore {
       responseStatusTimestamp: enteredAt,
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
+      ...createInitialScriptedState(),
     });
 
     const newestUnhandledUser = this.findNewestUnhandledUserEntry();
@@ -639,6 +655,7 @@ export class AppStore {
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
+      ...createInitialScriptedState(),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -659,7 +676,19 @@ export class AppStore {
     }
 
     const current = this.state.activeTranscriptCursor;
-    const nextCursor = Math.min(current + 1, transcriptLength - 1);
+    const currentScriptedIndex = this.state.scriptedLineEntryIds.findIndex((entryId) => {
+      const entry = this.state.transcript[current];
+      return entry?.id === entryId;
+    });
+    const scriptedNextEntryId = currentScriptedIndex >= 0
+      ? this.state.scriptedLineEntryIds[currentScriptedIndex + 1] ?? null
+      : null;
+    const scriptedNextCursor = scriptedNextEntryId === null
+      ? null
+      : this.state.transcript.findIndex((entry) => entry.id === scriptedNextEntryId);
+    const nextCursor = scriptedNextCursor !== null && scriptedNextCursor >= 0
+      ? scriptedNextCursor
+      : Math.min(current + 1, transcriptLength - 1);
     if (nextCursor === current) {
       return;
     }
@@ -674,6 +703,7 @@ export class AppStore {
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
+      ...createInitialScriptedState(),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -686,6 +716,7 @@ export class AppStore {
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
+      ...createInitialScriptedState(),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
@@ -701,6 +732,7 @@ export class AppStore {
       dialogueIndex: -1,
       activeTranscriptCursor: -1,
       transcript: [],
+      ...createInitialScriptedState(),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
@@ -853,6 +885,7 @@ export class AppStore {
     this.patch({
       transcript,
       activeTranscriptCursor: getLatestTranscriptCursor(transcript),
+      ...createInitialScriptedState(),
       sttPartialTranscript: '',
       sttDraftDisplayText: '',
       sttDraftVisibleUntil: null,
@@ -894,6 +927,107 @@ export class AppStore {
       responseError: null,
       responseStatusTimestamp: Date.now(),
       lastTranscriptAt: Date.now(),
+    });
+  }
+
+  startScriptedScenario(options: { contactIndex: number; scenarioId: string; autoplay?: boolean }) {
+    const scenario = getScriptedScenarioById(options.scenarioId);
+    const contact = CONTACTS[options.contactIndex];
+    if (!scenario || !contact) {
+      return false;
+    }
+
+    const turns = createScriptedTranscriptTurns({
+      scenario,
+      contactName: contact.name,
+    });
+    if (turns.length === 0) {
+      return false;
+    }
+
+    const timestamp = Date.now();
+    const transcript: TranscriptEntry[] = [];
+    const entryIds: number[] = [];
+    const metadataByEntryId: Record<number, ScriptedLineMetadata> = {};
+    for (const turn of turns) {
+      const id = this.allocateTranscriptId();
+      transcript.push({
+        id,
+        role: turn.role,
+        speaker: turn.speaker,
+        text: turn.text,
+        contactName: contact.name,
+        createdAt: timestamp,
+        emotion: turn.emotion,
+      });
+      entryIds.push(id);
+      if (turn.metadata) {
+        metadataByEntryId[id] = turn.metadata;
+      }
+    }
+
+    const firstEntry = transcript[0];
+    const activeTranscriptCursor = 0;
+    this.patch({
+      selectedContactIndex: options.contactIndex,
+      screen: 'active',
+      activeActionIndex: 0,
+      listeningActionIndex: 0,
+      incomingActionIndex: 0,
+      endedActionIndex: 0,
+      dialogueIndex: -1,
+      transcript,
+      activeTranscriptCursor,
+      turnState: 'responding',
+      responseError: null,
+      responseStatusTimestamp: timestamp,
+      pendingResponseId: null,
+      lastHandledUserTranscriptId: null,
+      speechWindow: firstEntry.role === 'contact' || firstEntry.role === 'system'
+        ? {
+          isOpen: true,
+          source: 'scripted_text',
+          entryId: firstEntry.id,
+          role: firstEntry.role,
+        }
+        : createInitialSpeechWindowState(),
+      scriptedScenarioId: scenario.id,
+      scriptedScenarioTitle: scenario.title,
+      scriptedLineEntryIds: entryIds,
+      scriptedLineMetadataByEntryId: metadataByEntryId,
+      scriptedAutoplay: Boolean(options.autoplay),
+      ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
+    });
+
+    return true;
+  }
+
+  setScriptedAutoplay(enabled: boolean) {
+    this.patch({ scriptedAutoplay: enabled });
+  }
+
+  replayCurrentScriptedLine() {
+    const currentEntry = this.state.transcript[this.state.activeTranscriptCursor];
+    if (!currentEntry || !this.state.scriptedScenarioId) {
+      return;
+    }
+
+    if (currentEntry.role === 'contact' || currentEntry.role === 'system') {
+      this.openScriptedSpeechWindow(currentEntry.id, currentEntry.role);
+    }
+  }
+
+  stopScriptedScenario() {
+    this.patch({
+      ...createInitialScriptedState(),
+      screen: 'ended',
+      endedActionIndex: 1,
+      speechWindow: createInitialSpeechWindowState(),
+      turnState: 'idle',
+      pendingResponseId: null,
+      responseError: null,
+      responseStatusTimestamp: Date.now(),
     });
   }
 }

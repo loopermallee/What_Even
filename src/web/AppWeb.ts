@@ -1,5 +1,6 @@
 import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
 import { resolveCodecPortraitState, type CodecPortraitScene } from '../app/codecPortraitState';
+import { getScriptedScenariosForContact } from '../app/scriptedScenarios';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
 import { resolveCodecPortraitFamily } from '../app/portraitExpression';
@@ -57,6 +58,7 @@ type CodecAnimatedDomNodes = {
 type FxDemoMode = 'live' | 'idle' | 'speaking' | 'transition';
 type FxDemoSide = 'left' | 'right';
 type CodecGlitchKind = 'connect' | 'switch' | 'interrupt';
+type SignalPhase = 'flare' | 'decode' | 'settle';
 
 type FxQueryState = {
   demoEnabled: boolean;
@@ -277,8 +279,12 @@ export class AppWeb {
   private previousState: AppState | null = null;
   private activeCodecGlitch: CodecGlitchKind | null = null;
   private codecGlitchTimer: number | null = null;
+  private signalPhase: SignalPhase | null = null;
+  private signalPhaseTimer: number | null = null;
   private scriptedSpeechWindowTimer: number | null = null;
+  private scriptedAutoplayTimer: number | null = null;
   private scheduledSpeechWindowEntryId: number | null = null;
+  private readonly scriptedScenarioSelectionByContact = new Map<number, string>();
   private fxDemoMode: FxDemoMode;
   private fxDemoSide: FxDemoSide;
   private lastRenderedState: AppState | null = null;
@@ -341,8 +347,13 @@ export class AppWeb {
       window.clearTimeout(this.codecGlitchTimer);
       this.codecGlitchTimer = null;
     }
+    if (this.signalPhaseTimer !== null) {
+      window.clearTimeout(this.signalPhaseTimer);
+      this.signalPhaseTimer = null;
+    }
 
     this.clearSpeechWindowTimer();
+    this.clearScriptedAutoplayTimer();
     this.portraitAnimator.destroy();
     this.animatedNodes = {
       leftFrame: null,
@@ -358,12 +369,14 @@ export class AppWeb {
     const nextGlitch = this.getCodecGlitchEvent(this.previousState, state);
     if (nextGlitch) {
       this.triggerCodecGlitch(nextGlitch);
+      this.triggerSignalPhases();
     }
 
     const root = mustQuery<HTMLDivElement>('#webRoot');
     const baseScene = resolveCodecPortraitState(state);
     this.syncScriptedSpeechWindowTimer(state, baseScene);
     const scene = this.getEffectivePortraitScene(baseScene);
+    this.syncScriptedAutoplay(state, scene);
     this.portraitAnimator.setScene(scene);
     const animationFrame = this.portraitAnimator.getSnapshot();
     const effectiveGlitch = this.getEffectiveCodecGlitch();
@@ -436,6 +449,28 @@ export class AppWeb {
       this.codecGlitchTimer = null;
       this.render(this.store.getState());
     }, durationMs);
+  }
+
+  private triggerSignalPhases() {
+    if (this.signalPhaseTimer !== null) {
+      window.clearTimeout(this.signalPhaseTimer);
+      this.signalPhaseTimer = null;
+    }
+
+    this.signalPhase = 'flare';
+    window.setTimeout(() => {
+      this.signalPhase = 'decode';
+      this.render(this.store.getState());
+      this.signalPhaseTimer = window.setTimeout(() => {
+        this.signalPhase = 'settle';
+        this.render(this.store.getState());
+        this.signalPhaseTimer = window.setTimeout(() => {
+          this.signalPhase = null;
+          this.signalPhaseTimer = null;
+          this.render(this.store.getState());
+        }, 180);
+      }, 260);
+    }, 90);
   }
 
   private getEffectivePortraitScene(scene: CodecPortraitScene): CodecPortraitScene {
@@ -730,7 +765,7 @@ export class AppWeb {
         </div>
 
         <section class="codec-stage">
-          <div class="codec-machine ${effectiveGlitch ? `codec-glitch-${effectiveGlitch}` : ''} ${this.fxDemoEnabled && this.fxDemoMode === 'transition' ? 'fx-demo-transition' : ''} ${isSpeaking ? 'codec-machine-speaking' : 'codec-machine-idle'}">
+          <div class="codec-machine ${effectiveGlitch ? `codec-glitch-${effectiveGlitch}` : ''} ${this.signalPhase ? `codec-signal-phase-${this.signalPhase}` : ''} ${this.fxDemoEnabled && this.fxDemoMode === 'transition' ? 'fx-demo-transition' : ''} ${isSpeaking ? 'codec-machine-speaking' : 'codec-machine-idle'}">
             <div class="codec-transmission-layers" aria-hidden="true">
               <div class="codec-noise-layer"></div>
               <div class="codec-crt-layer"></div>
@@ -967,6 +1002,47 @@ export class AppWeb {
     this.scheduledSpeechWindowEntryId = null;
   }
 
+  private clearScriptedAutoplayTimer() {
+    if (this.scriptedAutoplayTimer !== null) {
+      window.clearTimeout(this.scriptedAutoplayTimer);
+      this.scriptedAutoplayTimer = null;
+    }
+  }
+
+  private syncScriptedAutoplay(state: AppState, scene: CodecPortraitScene) {
+    if (
+      !state.scriptedAutoplay
+      || state.screen !== 'active'
+      || !state.scriptedScenarioId
+      || state.activeTranscriptCursor < 0
+    ) {
+      this.clearScriptedAutoplayTimer();
+      return;
+    }
+
+    const activeEntry = state.transcript[state.activeTranscriptCursor] ?? null;
+    if (!activeEntry || this.scriptedAutoplayTimer !== null) {
+      return;
+    }
+
+    const scriptedIndex = state.scriptedLineEntryIds.findIndex((id) => id === activeEntry.id);
+    const nextId = scriptedIndex >= 0 ? state.scriptedLineEntryIds[scriptedIndex + 1] ?? null : null;
+    if (nextId === null) {
+      this.clearScriptedAutoplayTimer();
+      return;
+    }
+
+    const pauseAfterMs = scene.currentLineMetadata?.pauseAfterMs ?? 220;
+    const delayMs = getScriptedSpeechWindowDurationMs(scene.currentLine) + pauseAfterMs;
+    this.scriptedAutoplayTimer = window.setTimeout(() => {
+      this.scriptedAutoplayTimer = null;
+      const currentState = this.store.getState();
+      if (currentState.scriptedAutoplay && currentState.screen === 'active') {
+        this.store.advanceDialogueOrEnd();
+      }
+    }, delayMs);
+  }
+
   private captureAnimatedNodes(root: ParentNode) {
     this.animatedNodes = {
       leftFrame: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-frame'),
@@ -1037,6 +1113,10 @@ export class AppWeb {
   private renderDebugView(state: AppState) {
     const latestUserFinal = [...state.transcript].reverse().find((entry) => entry.role === 'user') ?? null;
     const latestGenerated = [...state.transcript].reverse().find((entry) => entry.role === 'contact' || entry.role === 'system') ?? null;
+    const scriptedContactScenarios = getScriptedScenariosForContact(CONTACTS[state.selectedContactIndex]?.characterId);
+    const selectedScenarioId = this.scriptedScenarioSelectionByContact.get(state.selectedContactIndex)
+      ?? scriptedContactScenarios[0]?.id
+      ?? '';
 
     return `
       <div class="wrap">
@@ -1065,6 +1145,26 @@ export class AppWeb {
         </div>
 
         ${this.renderLifecycleHarnessPanel()}
+        <div class="harness-card">
+          <div class="harness-header">
+            <div>
+              <div class="harness-title">Scripted Scenario Playback</div>
+              <div class="harness-subtitle">Extends the existing transcript cursor/state pipeline.</div>
+            </div>
+          </div>
+          <div class="harness-actions">
+            <select id="scriptScenarioPicker" ${scriptedContactScenarios.length === 0 ? 'disabled' : ''}>
+              ${scriptedContactScenarios.map((scenario) => `
+                <option value="${scenario.id}" ${scenario.id === selectedScenarioId ? 'selected' : ''}>${scenario.title}</option>
+              `).join('')}
+            </select>
+            <button id="scriptStartBtn" ${scriptedContactScenarios.length === 0 ? 'disabled' : ''}>Start Scripted</button>
+            <button id="scriptAdvanceBtn" ${state.scriptedScenarioId ? '' : 'disabled'}>Advance</button>
+            <button id="scriptReplayBtn" ${state.scriptedScenarioId ? '' : 'disabled'}>Replay Line</button>
+            <button id="scriptStopBtn" ${state.scriptedScenarioId ? '' : 'disabled'}>Stop/Reset</button>
+            <button id="scriptAutoplayBtn" ${state.scriptedScenarioId ? '' : 'disabled'}>${state.scriptedAutoplay ? 'Autoplay: On' : 'Autoplay: Off'}</button>
+          </div>
+        </div>
 
         <div class="debug-card">
           <div class="debug-section">
@@ -1353,6 +1453,57 @@ export class AppWeb {
           this.store.setActiveActionIndex(0);
           this.store.advanceDialogueOrEnd();
         }
+      };
+    }
+
+    const scriptScenarioPicker = document.querySelector<HTMLSelectElement>('#scriptScenarioPicker');
+    if (scriptScenarioPicker) {
+      scriptScenarioPicker.onchange = () => {
+        this.scriptedScenarioSelectionByContact.set(state.selectedContactIndex, scriptScenarioPicker.value);
+      };
+    }
+
+    const scriptStartBtn = document.querySelector<HTMLButtonElement>('#scriptStartBtn');
+    if (scriptStartBtn) {
+      scriptStartBtn.onclick = () => {
+        const scenarioId = this.scriptedScenarioSelectionByContact.get(state.selectedContactIndex)
+          ?? scriptScenarioPicker?.value
+          ?? '';
+        if (!scenarioId) {
+          return;
+        }
+        this.store.startScriptedScenario({
+          contactIndex: state.selectedContactIndex,
+          scenarioId,
+        });
+      };
+    }
+
+    const scriptAdvanceBtn = document.querySelector<HTMLButtonElement>('#scriptAdvanceBtn');
+    if (scriptAdvanceBtn) {
+      scriptAdvanceBtn.onclick = () => {
+        this.store.advanceDialogueOrEnd();
+      };
+    }
+
+    const scriptReplayBtn = document.querySelector<HTMLButtonElement>('#scriptReplayBtn');
+    if (scriptReplayBtn) {
+      scriptReplayBtn.onclick = () => {
+        this.store.replayCurrentScriptedLine();
+      };
+    }
+
+    const scriptStopBtn = document.querySelector<HTMLButtonElement>('#scriptStopBtn');
+    if (scriptStopBtn) {
+      scriptStopBtn.onclick = () => {
+        this.store.stopScriptedScenario();
+      };
+    }
+
+    const scriptAutoplayBtn = document.querySelector<HTMLButtonElement>('#scriptAutoplayBtn');
+    if (scriptAutoplayBtn) {
+      scriptAutoplayBtn.onclick = () => {
+        this.store.setScriptedAutoplay(!this.store.getState().scriptedAutoplay);
       };
     }
 

@@ -7,6 +7,7 @@ import type {
   CodecExpression,
   CodecPortraitFamily,
   CodecTalkingMode,
+  ScriptedLineMetadata,
   SpeakerSide,
   TranscriptEntry,
 } from './types';
@@ -32,6 +33,7 @@ export type CodecPortraitScene = {
   talkingMode: CodecTalkingMode;
   currentEntryId: number | null;
   currentRole: TranscriptEntry['role'] | null;
+  currentLineMetadata: ScriptedLineMetadata | null;
   signalBarBase: number;
   listeningActivityLevel: number;
   left: CodecPortraitSideState;
@@ -260,6 +262,9 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
     talkingMode,
     currentEntryId: currentEntry?.id ?? state.speechWindow.entryId,
     currentRole: currentEntry?.role ?? state.speechWindow.role,
+    currentLineMetadata: (currentEntry?.id !== undefined && currentEntry?.id !== null)
+      ? (state.scriptedLineMetadataByEntryId[currentEntry.id] ?? null)
+      : null,
     signalBarBase: getSignalBarBase(state),
     listeningActivityLevel: state.listeningActivityLevel,
     left,

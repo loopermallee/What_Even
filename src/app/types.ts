@@ -23,6 +23,30 @@ export type DialogueLine = {
   emotion?: CodecExpression;
 };
 
+export type ScriptedTalkCadence = 'brief' | 'measured' | 'urgent' | 'staccato';
+
+export type ScriptedLineMetadata = {
+  speakerSide?: SpeakerSide;
+  expression?: CodecExpression;
+  cadence?: ScriptedTalkCadence;
+  pauseAfterMs?: number;
+  transitionIntensity?: 'low' | 'medium' | 'high';
+};
+
+export type ScriptedScenarioLine = {
+  speaker: SpeakerSide;
+  text: string;
+  emotion?: CodecExpression;
+  metadata?: ScriptedLineMetadata;
+};
+
+export type ScriptedScenario = {
+  id: string;
+  title: string;
+  contactCharacterId: Exclude<CodecCharacterId, 'snake'>;
+  lines: ScriptedScenarioLine[];
+};
+
 export type Contact = {
   name: string;
   code: string;
@@ -129,6 +153,11 @@ export type AppState = {
   dialogueIndex: number;
   activeTranscriptCursor: number;
   transcript: TranscriptEntry[];
+  scriptedScenarioId: string | null;
+  scriptedScenarioTitle: string | null;
+  scriptedLineEntryIds: number[];
+  scriptedLineMetadataByEntryId: Record<number, ScriptedLineMetadata>;
+  scriptedAutoplay: boolean;
   turnState: TurnState;
   lastHandledUserTranscriptId: number | null;
   pendingResponseId: number | null;
