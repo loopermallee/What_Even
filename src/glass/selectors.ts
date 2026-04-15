@@ -5,7 +5,7 @@ import { buildDebugScreen } from './screens/debug';
 import { buildEndedScreen } from './screens/ended';
 import { buildIncomingScreen } from './screens/incoming';
 import { buildListeningScreen } from './screens/listening';
-import type { GlassScreenView } from './shared';
+import { resolveGlassPortraitState, type GlassPortraitState, type GlassScreenView } from './shared';
 
 export function selectGlassScreenView(state: AppState): GlassScreenView {
   if (state.screen === 'contacts') {
@@ -42,4 +42,8 @@ export function selectDialogueForGlasses(state: AppState, cursorVisible = false)
 
 export function selectActionItemsForGlasses(state: AppState) {
   return selectGlassScreenView(state).actions;
+}
+
+export function selectGlassPortraitState(state: AppState): GlassPortraitState {
+  return resolveGlassPortraitState(state);
 }

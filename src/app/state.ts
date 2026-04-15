@@ -10,12 +10,15 @@ import type {
   NormalizedInput,
   RawEventDebugInfo,
   ReliabilityDebugInfo,
+  SpeechWindowState,
   SttStatus,
   TranscriptEntry,
   TurnState,
 } from './types';
 
 const DEVICE_PAGE_LIFECYCLE_KEY = 'what-even:device-page-lifecycle';
+const LIVE_AUDIO_OPEN_THRESHOLD = 0.18;
+const LIVE_AUDIO_CLOSE_THRESHOLD = 0.08;
 
 type Listener = (state: AppState) => void;
 
@@ -91,6 +94,22 @@ function createInitialTurnState() {
   };
 }
 
+function createInitialSpeechWindowState(): SpeechWindowState {
+  return {
+    isOpen: false,
+    source: 'none',
+    entryId: null,
+    role: null,
+  };
+}
+
+function sameSpeechWindow(left: SpeechWindowState, right: SpeechWindowState) {
+  return left.isOpen === right.isOpen
+    && left.source === right.source
+    && left.entryId === right.entryId
+    && left.role === right.role;
+}
+
 function createInitialReliabilityState(): ReliabilityDebugInfo {
   return {
     activeSttSessionToken: null,
@@ -143,6 +162,7 @@ export function createInitialState(): AppState {
     reliability: createInitialReliabilityState(),
     ...createInitialAudioCaptureState(),
     ...createInitialSttState(0),
+    speechWindow: createInitialSpeechWindowState(),
     logs: [],
   };
 }
@@ -194,6 +214,14 @@ export class AppStore {
     });
   }
 
+  private patchSpeechWindow(nextSpeechWindow: SpeechWindowState) {
+    if (sameSpeechWindow(this.state.speechWindow, nextSpeechWindow)) {
+      return;
+    }
+
+    this.patch({ speechWindow: nextSpeechWindow });
+  }
+
   private clearTurnWorkForBoundary(nextTurnState: TurnState = 'idle') {
     return {
       ...createInitialTurnState(),
@@ -220,7 +248,68 @@ export class AppStore {
     return null;
   }
 
-  private appendGeneratedResponseTurns(responseTurns: Array<Pick<TranscriptEntry, 'role' | 'speaker' | 'text'>>) {
+  private presentTranscriptEntryByIndex(index: number) {
+    const entry = this.state.transcript[index] ?? null;
+    if (!entry) {
+      this.patch({
+        activeTranscriptCursor: -1,
+        speechWindow: createInitialSpeechWindowState(),
+      });
+      return;
+    }
+
+    const nextSpeechWindow = entry.role === 'contact' || entry.role === 'system'
+      ? {
+        isOpen: true,
+        source: 'scripted_text' as const,
+        entryId: entry.id,
+        role: entry.role,
+      }
+      : createInitialSpeechWindowState();
+
+    this.patch({
+      activeTranscriptCursor: index,
+      speechWindow: nextSpeechWindow,
+    });
+  }
+
+  private reconcileLiveAudioSpeechWindow(options?: {
+    partialText?: string;
+    listeningActivityLevel?: number;
+    forceClose?: boolean;
+  }) {
+    if (this.state.screen !== 'listening') {
+      if (this.state.speechWindow.source === 'live_audio') {
+        this.patchSpeechWindow(createInitialSpeechWindowState());
+      }
+      return;
+    }
+
+    if (options?.forceClose) {
+      if (this.state.speechWindow.source === 'live_audio') {
+        this.patchSpeechWindow(createInitialSpeechWindowState());
+      }
+      return;
+    }
+
+    const partialText = options?.partialText ?? this.state.sttPartialTranscript;
+    const listeningActivityLevel = options?.listeningActivityLevel ?? this.state.listeningActivityLevel;
+    const hasPartial = partialText.trim().length > 0;
+    const shouldOpen = hasPartial || listeningActivityLevel >= LIVE_AUDIO_OPEN_THRESHOLD;
+    const shouldHold = this.state.speechWindow.source === 'live_audio'
+      && listeningActivityLevel > LIVE_AUDIO_CLOSE_THRESHOLD;
+
+    if (shouldOpen) {
+      this.openLiveAudioSpeechWindow('user');
+      return;
+    }
+
+    if (!shouldHold && this.state.speechWindow.source === 'live_audio') {
+      this.patchSpeechWindow(createInitialSpeechWindowState());
+    }
+  }
+
+  private appendGeneratedResponseTurns(responseTurns: Array<Pick<TranscriptEntry, 'role' | 'speaker' | 'text' | 'emotion'>>) {
     if (responseTurns.length === 0) {
       return this.state.transcript;
     }
@@ -234,6 +323,7 @@ export class AppStore {
       text: turn.text,
       contactName,
       createdAt: timestamp,
+      emotion: turn.emotion,
     }));
 
     return [...this.state.transcript, ...entries];
@@ -250,7 +340,10 @@ export class AppStore {
   }
 
   setStarted(started: boolean) {
-    this.patch({ started });
+    this.patch({
+      started,
+      speechWindow: started ? this.state.speechWindow : createInitialSpeechWindowState(),
+    });
   }
 
   setSimulatorSessionDetected(detected: boolean) {
@@ -262,7 +355,10 @@ export class AppStore {
   }
 
   setScreen(screen: AppScreen) {
-    this.patch({ screen });
+    this.patch({
+      screen,
+      speechWindow: screen === this.state.screen ? this.state.speechWindow : createInitialSpeechWindowState(),
+    });
   }
 
   enterDebugScreen() {
@@ -273,6 +369,7 @@ export class AppStore {
     this.patch({
       screenBeforeDebug: this.state.screen,
       screen: 'debug',
+      speechWindow: createInitialSpeechWindowState(),
     });
   }
 
@@ -330,6 +427,7 @@ export class AppStore {
     this.patch({
       selectedContactIndex: normalized,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
     });
   }
@@ -390,6 +488,32 @@ export class AppStore {
     });
   }
 
+  openScriptedSpeechWindow(entryId: number, role: TranscriptEntry['role']) {
+    this.patchSpeechWindow({
+      isOpen: true,
+      source: 'scripted_text',
+      entryId,
+      role,
+    });
+  }
+
+  openLiveAudioSpeechWindow(role: TranscriptEntry['role']) {
+    this.patchSpeechWindow({
+      isOpen: true,
+      source: 'live_audio',
+      entryId: null,
+      role,
+    });
+  }
+
+  closeSpeechWindow() {
+    this.patchSpeechWindow(createInitialSpeechWindowState());
+  }
+
+  cancelSpeechWindow() {
+    this.patchSpeechWindow(createInitialSpeechWindowState());
+  }
+
   goToIncomingForSelectedContact() {
     this.patch({
       screen: 'incoming',
@@ -400,6 +524,7 @@ export class AppStore {
       dialogueIndex: -1,
       activeTranscriptCursor: -1,
       transcript: [],
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
@@ -413,6 +538,7 @@ export class AppStore {
       listeningActionIndex: 0,
       activeActionIndex: 0,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(listeningSessionId),
@@ -426,6 +552,7 @@ export class AppStore {
       dialogueIndex: -1,
       activeActionIndex: 0,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      speechWindow: createInitialSpeechWindowState(),
       turnState: 'awaiting_user',
       pendingResponseId: null,
       responseError: null,
@@ -469,15 +596,27 @@ export class AppStore {
         responseStatusTimestamp: Date.now(),
       });
 
+      const firstGeneratedIndex = this.state.transcript.length;
       const transcript = this.appendGeneratedResponseTurns(generated);
+      const firstPresentedIndex = generated.length > 0 ? firstGeneratedIndex : getLatestTranscriptCursor(transcript);
+      const firstPresentedEntry = transcript[firstPresentedIndex] ?? null;
+      const nextSpeechWindow = firstPresentedEntry && (firstPresentedEntry.role === 'contact' || firstPresentedEntry.role === 'system')
+        ? {
+          isOpen: true,
+          source: 'scripted_text' as const,
+          entryId: firstPresentedEntry.id,
+          role: firstPresentedEntry.role,
+        }
+        : createInitialSpeechWindowState();
       this.patch({
         transcript,
-        activeTranscriptCursor: getLatestTranscriptCursor(transcript),
+        activeTranscriptCursor: firstPresentedIndex,
         lastHandledUserTranscriptId: newestUnhandledUser.id,
         pendingResponseId: null,
         turnState: 'complete',
         responseError: null,
         responseStatusTimestamp: Date.now(),
+        speechWindow: nextSpeechWindow,
       });
     } catch (error) {
       if (this.state.pendingResponseId !== responseWorkId) {
@@ -498,6 +637,7 @@ export class AppStore {
       screen: 'ended',
       endedActionIndex: 0,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
@@ -511,7 +651,10 @@ export class AppStore {
 
     const transcriptLength = this.state.transcript.length;
     if (transcriptLength === 0) {
-      this.patch({ activeTranscriptCursor: -1 });
+      this.patch({
+        activeTranscriptCursor: -1,
+        speechWindow: createInitialSpeechWindowState(),
+      });
       return;
     }
 
@@ -521,7 +664,7 @@ export class AppStore {
       return;
     }
 
-    this.patch({ activeTranscriptCursor: nextCursor });
+    this.presentTranscriptEntryByIndex(nextCursor);
   }
 
   endCall() {
@@ -529,6 +672,7 @@ export class AppStore {
       screen: 'ended',
       endedActionIndex: 0,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
@@ -540,6 +684,7 @@ export class AppStore {
       screen: 'ended',
       endedActionIndex: 0,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
@@ -556,6 +701,7 @@ export class AppStore {
       dialogueIndex: -1,
       activeTranscriptCursor: -1,
       transcript: [],
+      speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
@@ -592,6 +738,13 @@ export class AppStore {
     }
 
     this.patch(patch);
+
+    const shouldForceCloseLiveAudio = !nextMicOpen || status === 'idle' || status === 'closing' || status === 'error';
+    this.reconcileLiveAudioSpeechWindow({
+      partialText: this.state.sttPartialTranscript,
+      listeningActivityLevel: this.state.listeningActivityLevel,
+      forceClose: shouldForceCloseLiveAudio,
+    });
   }
 
   updateAudioCaptureMetrics(update: {
@@ -618,6 +771,11 @@ export class AppStore {
       lastAudioFrameAt: update.lastAudioFrameAt,
       listeningActivityLevel: update.listeningActivityLevel,
     });
+
+    this.reconcileLiveAudioSpeechWindow({
+      partialText: this.state.sttPartialTranscript,
+      listeningActivityLevel: update.listeningActivityLevel,
+    });
   }
 
   setSttStatus(status: SttStatus, options?: { error?: string | null }) {
@@ -637,6 +795,9 @@ export class AppStore {
     }
 
     this.patch(patch);
+    if ((status === 'idle' || status === 'closing' || status === 'error') && this.state.speechWindow.source === 'live_audio') {
+      this.reconcileLiveAudioSpeechWindow({ forceClose: true });
+    }
   }
 
   setSttPartialTranscript(text: string) {
@@ -651,6 +812,11 @@ export class AppStore {
       sttDraftVisibleUntil: text.trim() ? null : this.state.sttDraftVisibleUntil,
       lastTranscriptAt: now,
     });
+
+    this.reconcileLiveAudioSpeechWindow({
+      partialText: text,
+      listeningActivityLevel: this.state.listeningActivityLevel,
+    });
   }
 
   clearSttPartialTranscript() {
@@ -663,6 +829,7 @@ export class AppStore {
       sttPartialTranscript: '',
       sttDraftDisplayText: preservedDraft,
       sttDraftVisibleUntil: preservedDraft ? Date.now() + 1600 : null,
+      speechWindow: createInitialSpeechWindowState(),
     });
   }
 
@@ -689,6 +856,7 @@ export class AppStore {
       sttPartialTranscript: '',
       sttDraftDisplayText: '',
       sttDraftVisibleUntil: null,
+      speechWindow: createInitialSpeechWindowState(),
       pendingResponseId: null,
       turnState: this.state.screen === 'active' ? 'awaiting_user' : this.state.turnState,
       responseError: null,
@@ -709,9 +877,18 @@ export class AppStore {
     };
 
     const transcript = [...this.state.transcript, nextEntry];
+    const nextSpeechWindow = nextEntry.role === 'contact' || nextEntry.role === 'system'
+      ? {
+        isOpen: true,
+        source: 'scripted_text' as const,
+        entryId: nextEntry.id,
+        role: nextEntry.role,
+      }
+      : createInitialSpeechWindowState();
     this.patch({
       transcript,
       activeTranscriptCursor: getLatestTranscriptCursor(transcript),
+      speechWindow: nextSpeechWindow,
       pendingResponseId: null,
       turnState: nextEntry.role === 'user' ? 'awaiting_user' : this.state.turnState,
       responseError: null,

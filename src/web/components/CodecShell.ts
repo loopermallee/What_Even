@@ -33,7 +33,9 @@ export function renderCodecShell(state: AppState, options: {
     tag: options.leftTag,
     characterId: options.leftCharacterId,
     active: options.leftActive,
-    mouthOpen: options.leftActive && options.mouthOpen,
+    expression: options.leftActive ? 'stern' : 'idle',
+    blink: 'open',
+    mouth: options.leftActive && options.mouthOpen ? 'half' : 'closed',
   })}
 
         <div class="codec-center-core">
@@ -57,7 +59,9 @@ export function renderCodecShell(state: AppState, options: {
     tag: RIGHT_CHARACTER.portraitTag,
     characterId: RIGHT_CHARACTER.characterId,
     active: options.rightActive,
-    mouthOpen: options.rightActive && options.mouthOpen,
+    expression: options.rightActive ? 'stern' : 'idle',
+    blink: 'open',
+    mouth: options.rightActive && options.mouthOpen ? 'half' : 'closed',
   })}
       </div>
 

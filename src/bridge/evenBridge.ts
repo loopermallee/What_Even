@@ -131,9 +131,12 @@ export class EvenBridgeApp {
   private syncQueuedWhileInFlight = false;
   private syncNeedsForcedImages = false;
   private lastRenderedPortraitAsset: string | null = null;
+  private lastQueuedPortraitAsset: string | null = null;
+  private lastPortraitSyncAt: number | null = null;
   private lastSyncedTextContent = '';
   private lastRebuildSignature = '';
   private lastSyncSignature = '';
+  private lastQueuedScreen: string | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private previousObservedState: { screen: string; selectedContactIndex: number; started: boolean } | null = null;
   private lastAudioLifecycleSignature = '';
@@ -161,6 +164,7 @@ export class EvenBridgeApp {
   private readonly sttRetryDelayMs = 350;
   private readonly sttAdjacentFinalDedupeWindowMs = 1200;
   private readonly syncDebounceMs = 70;
+  private readonly portraitSyncCooldownMs = 600;
   private readonly audioMetricThrottleMs = 90;
   private readonly audioDropLogThrottleMs = 1500;
   private readonly sttPartialFlushMs = 70;
@@ -172,6 +176,7 @@ export class EvenBridgeApp {
   private readonly extendedDeviceObservationPollMs = 500;
   private suppressSimulatorUnknownTapUntil = 0;
   private bridgeReadyAt: number | null = null;
+  private portraitCooldownTimer: number | null = null;
   private sawLaunchSourceCallback = false;
   private latestLaunchSource: string | null = null;
   private firstLaunchSourceCallbackAt: number | null = null;
@@ -554,13 +559,15 @@ export class EvenBridgeApp {
     this.refreshCursorBlinkLoop();
     this.refreshDraftVisibilityTimer();
 
+    const screenChanged = this.lastQueuedScreen !== this.store.getState().screen;
+    this.lastQueuedScreen = this.store.getState().screen;
     const signature = this.getSyncSignature();
     if (signature === this.lastSyncSignature) {
       return;
     }
 
     this.lastSyncSignature = signature;
-    this.scheduleSync(false);
+    this.scheduleSync(screenChanged);
   }
 
   private scheduleSync(forceImages: boolean) {
@@ -635,6 +642,10 @@ export class EvenBridgeApp {
       window.clearTimeout(this.draftVisibilityTimer);
       this.draftVisibilityTimer = null;
     }
+    if (this.portraitCooldownTimer !== null) {
+      window.clearTimeout(this.portraitCooldownTimer);
+      this.portraitCooldownTimer = null;
+    }
     this.syncInFlight = false;
     this.syncQueuedWhileInFlight = false;
     this.syncNeedsForcedImages = false;
@@ -642,9 +653,12 @@ export class EvenBridgeApp {
     this.normalizer.clear();
     this.imageQueue?.reset();
     this.lastRenderedPortraitAsset = null;
+    this.lastQueuedPortraitAsset = null;
+    this.lastPortraitSyncAt = null;
     this.lastSyncedTextContent = '';
     this.lastRebuildSignature = '';
     this.lastSyncSignature = '';
+    this.lastQueuedScreen = null;
     this.lastAudioLifecycleSignature = '';
     this.audioCapture.clearBuffer();
     this.previousObservedState = null;
@@ -1045,8 +1059,22 @@ export class EvenBridgeApp {
       return;
     }
 
+    if (!force && this.lastQueuedPortraitAsset === portraitAsset) {
+      return;
+    }
+
+    const now = Date.now();
+    const remainingCooldownMs = this.lastPortraitSyncAt === null
+      ? 0
+      : this.portraitSyncCooldownMs - (now - this.lastPortraitSyncAt);
+    if (!force && remainingCooldownMs > 0) {
+      this.schedulePortraitCooldownSync(remainingCooldownMs);
+      return;
+    }
+
     try {
       const portraitBytes = await getCodecAssetBytes(portraitAsset);
+      this.lastQueuedPortraitAsset = portraitAsset;
       await this.imageQueue.enqueue({
         containerID: GLASSES_CONTAINERS.portraitImage.id,
         containerName: GLASSES_CONTAINERS.portraitImage.name,
@@ -1054,18 +1082,31 @@ export class EvenBridgeApp {
       });
 
       this.lastRenderedPortraitAsset = portraitAsset;
+      this.lastPortraitSyncAt = Date.now();
       this.store.setImageSyncDebug({
         lastPortraitAsset: portraitAsset,
         lastResult: 'success',
         lastAt: Date.now(),
       });
     } catch {
+      this.lastQueuedPortraitAsset = null;
       this.store.setImageSyncDebug({
         lastPortraitAsset: portraitAsset,
         lastResult: 'failed',
         lastAt: Date.now(),
       });
     }
+  }
+
+  private schedulePortraitCooldownSync(delayMs: number) {
+    if (this.portraitCooldownTimer !== null) {
+      return;
+    }
+
+    this.portraitCooldownTimer = window.setTimeout(() => {
+      this.portraitCooldownTimer = null;
+      this.scheduleSync(false);
+    }, delayMs + 10);
   }
 
   private refreshCursorBlinkLoop() {
@@ -1117,6 +1158,10 @@ export class EvenBridgeApp {
       pendingResponseId: state.pendingResponseId,
       responseError: state.responseError,
       responseStatusTimestampBucket: state.responseStatusTimestamp ? Math.floor(state.responseStatusTimestamp / 1000) : null,
+      speechWindowOpen: state.speechWindow.isOpen,
+      speechWindowSource: state.speechWindow.source,
+      speechWindowEntryId: state.speechWindow.entryId,
+      speechWindowRole: state.speechWindow.role,
       micOpen: state.micOpen,
       audioCaptureStatus: state.audioCaptureStatus,
       sttStatus: state.sttStatus,

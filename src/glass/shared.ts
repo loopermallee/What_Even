@@ -1,9 +1,17 @@
 import { CONTACTS } from '../app/contacts';
-import type { AppState, TranscriptEntry } from '../app/types';
+import { resolveCodecPortraitState } from '../app/codecPortraitState';
+import type { AppState, SpeakerSide, TranscriptEntry } from '../app/types';
 
-export type PortraitAsset = 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
+export type PortraitAssetBase = 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
+export type PortraitAsset =
+  | PortraitAssetBase
+  | 'portrait-colonel-alert'
+  | 'portrait-meryl-alert'
+  | 'portrait-otacon-alert'
+  | 'portrait-snake-alert';
 export type GlassPresentationMode = 'compact' | 'read';
 export type GlassLiveLineKind = 'none' | 'contact' | 'user';
+export type GlassPortraitExpressionBucket = 'default' | 'alert';
 
 export const GLASSES_CONTAINERS = {
   startupHeaderText: { id: 91, name: 'boot-head' },
@@ -22,6 +30,16 @@ export type GlassScreenView = {
   selectedActionIndex: number;
   mode: GlassPresentationMode;
   liveLineKind: GlassLiveLineKind;
+};
+
+export type GlassPortraitState = {
+  portraitAsset: PortraitAsset;
+  portraitAssetBase: PortraitAssetBase;
+  expressionBucket: GlassPortraitExpressionBucket;
+  speakerSide: SpeakerSide | null;
+  isTalking: boolean;
+  barBucket: number;
+  syncKey: string;
 };
 
 const DEFAULT_CODEC_LINE_WIDTH = 27;
@@ -160,7 +178,7 @@ export function getSelectedContact(state: AppState) {
   return CONTACTS[state.selectedContactIndex] ?? CONTACTS[0];
 }
 
-export function getPortraitAssetForContactName(name: string): PortraitAsset {
+export function getPortraitAssetForContactName(name: string): PortraitAssetBase {
   if (name === 'Colonel') {
     return 'portrait-colonel';
   }
@@ -177,20 +195,7 @@ export function getPortraitAssetForContactName(name: string): PortraitAsset {
 }
 
 export function getPortraitAssetForState(state: AppState): PortraitAsset {
-  const contact = getSelectedContact(state);
-
-  if (state.screen === 'active') {
-    const activeEntry = getActiveTranscriptEntry(state);
-    if (!activeEntry) {
-      return getPortraitAssetForContactName(contact.name);
-    }
-
-    if (activeEntry.role === 'user' || activeEntry.role === 'system') {
-      return 'portrait-snake';
-    }
-  }
-
-  return getPortraitAssetForContactName(contact.name);
+  return resolveGlassPortraitState(state).portraitAsset;
 }
 
 export function getCurrentSpeakerName(state: AppState) {
@@ -241,4 +246,56 @@ export function getPreviousTranscriptEntry(state: AppState, index: number) {
   }
 
   return state.transcript[index - 1] ?? null;
+}
+
+function toGlassExpressionBucket(expression: ReturnType<typeof resolveCodecPortraitState>['left']['expression']): GlassPortraitExpressionBucket {
+  return expression === 'angry' || expression === 'surprised' ? 'alert' : 'default';
+}
+
+function appendExpressionBucketToAsset(base: PortraitAssetBase, bucket: GlassPortraitExpressionBucket): PortraitAsset {
+  if (bucket === 'default') {
+    return base;
+  }
+
+  return `${base}-alert` as PortraitAsset;
+}
+
+function clampBarBucket(bucket: number) {
+  return Math.max(0, Math.min(10, Math.round(bucket)));
+}
+
+function getGlassPortraitBase(state: AppState, speakerSide: SpeakerSide | null) {
+  if (speakerSide === 'right') {
+    return 'portrait-snake' as PortraitAssetBase;
+  }
+
+  const contact = getSelectedContact(state);
+  return getPortraitAssetForContactName(contact.name);
+}
+
+export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
+  const scene = resolveCodecPortraitState(state);
+  const portraitAssetBase = getGlassPortraitBase(state, scene.activeSpeakerSide);
+  const activeExpression = scene.activeSpeakerSide === 'right'
+    ? scene.right.expression
+    : scene.left.expression;
+  const expressionBucket = scene.talkingMode === 'live_audio'
+    ? 'default'
+    : toGlassExpressionBucket(activeExpression);
+  const portraitAsset = appendExpressionBucketToAsset(portraitAssetBase, expressionBucket);
+  const isTalking = scene.talkingMode !== 'silent' && scene.currentRole !== 'system';
+  const liveAudioBucket = clampBarBucket(3 + Math.round(scene.listeningActivityLevel * 5));
+  const barBucket = scene.talkingMode === 'live_audio'
+    ? liveAudioBucket
+    : clampBarBucket(scene.signalBarBase + (isTalking ? 1 : 0));
+
+  return {
+    portraitAsset,
+    portraitAssetBase,
+    expressionBucket,
+    speakerSide: scene.activeSpeakerSide,
+    isTalking,
+    barBucket,
+    syncKey: `${portraitAsset}:${scene.activeSpeakerSide ?? 'none'}`,
+  };
 }

@@ -608,11 +608,13 @@ h1 {
   display: block;
 }
 
-.portrait-face.sprite-ready .portrait-silhouette,
-.portrait-face.sprite-ready .mouth-slot {
+.portrait-face.sprite-ready .portrait-silhouette {
   display: none;
 }
 
+.portrait-expression-layer,
+.portrait-eyes-layer,
+.portrait-mouth-layer,
 .portrait-grade-layer,
 .portrait-scanline-layer,
 .portrait-radio-layer,
@@ -625,6 +627,162 @@ h1 {
   pointer-events: none;
 }
 
+.portrait-expression-layer {
+  z-index: 3;
+  opacity: 0.18;
+  mix-blend-mode: screen;
+}
+
+.portrait-expression-idle {
+  background: radial-gradient(circle at 50% 24%, rgba(176, 255, 213, 0.1), transparent 42%);
+}
+
+.portrait-expression-stern {
+  background:
+    linear-gradient(180deg, rgba(226, 255, 236, 0.06), transparent 40%),
+    radial-gradient(circle at 50% 22%, rgba(176, 255, 213, 0.12), transparent 44%);
+}
+
+.portrait-expression-angry,
+.portrait-expression-surprised {
+  opacity: 0.24;
+  background:
+    linear-gradient(180deg, rgba(236, 255, 196, 0.12), transparent 32%),
+    radial-gradient(circle at 50% 20%, rgba(209, 255, 151, 0.12), transparent 48%);
+}
+
+.portrait-expression-thinking {
+  background:
+    linear-gradient(180deg, rgba(226, 255, 236, 0.05), transparent 55%),
+    linear-gradient(90deg, transparent 0%, rgba(215, 255, 232, 0.08) 50%, transparent 100%);
+}
+
+.portrait-expression-hurt {
+  opacity: 0.22;
+  background:
+    linear-gradient(135deg, rgba(236, 255, 196, 0.12), transparent 44%),
+    linear-gradient(180deg, transparent 0%, rgba(215, 255, 232, 0.08) 100%);
+}
+
+.portrait-eyes-layer {
+  z-index: 6;
+}
+
+.portrait-eye {
+  position: absolute;
+  top: 39%;
+  width: 19px;
+  border-top: 2px solid rgba(226, 255, 236, 0.74);
+  box-shadow: 0 0 10px rgba(190, 255, 218, 0.18);
+}
+
+.portrait-eye-left {
+  left: 31%;
+}
+
+.portrait-eye-right {
+  right: 31%;
+}
+
+.portrait-face[data-portrait-character="snake"] .portrait-eye {
+  top: 40%;
+}
+
+.portrait-face[data-portrait-character="otacon"] .portrait-eye {
+  top: 41%;
+}
+
+.portrait-face[data-portrait-character="meryl"] .portrait-eye {
+  top: 38%;
+}
+
+.portrait-face[data-portrait-character="colonel"] .portrait-eye {
+  top: 37%;
+}
+
+.portrait-eyes-layer[data-blink-state="closing"] .portrait-eye,
+.portrait-eyes-layer[data-blink-state="opening"] .portrait-eye {
+  border-top-width: 4px;
+  opacity: 0.8;
+}
+
+.portrait-eyes-layer[data-blink-state="closed"] .portrait-eye {
+  border-top-width: 6px;
+  opacity: 0.9;
+}
+
+.portrait-mouth-layer {
+  z-index: 7;
+}
+
+.portrait-mouth-layer::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  width: 26px;
+  height: 11px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(164, 255, 204, 0.12);
+  border-radius: 999px;
+  background: rgba(164, 255, 204, 0.05);
+}
+
+.portrait-mouth-core {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(231, 255, 240, 0.84);
+  box-shadow: 0 0 8px rgba(190, 255, 218, 0.16);
+}
+
+.portrait-face[data-portrait-character="snake"] .portrait-mouth-core,
+.portrait-face[data-portrait-character="snake"] .portrait-mouth-layer::before {
+  bottom: 19px;
+}
+
+.portrait-face[data-portrait-character="otacon"] .portrait-mouth-core,
+.portrait-face[data-portrait-character="otacon"] .portrait-mouth-layer::before {
+  bottom: 17px;
+}
+
+.portrait-face[data-portrait-character="meryl"] .portrait-mouth-core,
+.portrait-face[data-portrait-character="meryl"] .portrait-mouth-layer::before {
+  bottom: 20px;
+}
+
+.portrait-face[data-portrait-character="colonel"] .portrait-mouth-core,
+.portrait-face[data-portrait-character="colonel"] .portrait-mouth-layer::before {
+  bottom: 22px;
+}
+
+.portrait-mouth-layer[data-mouth-frame="half"] .portrait-mouth-core {
+  width: 17px;
+  height: 5px;
+  border-radius: 999px;
+}
+
+.portrait-mouth-layer[data-mouth-frame="open"] .portrait-mouth-core {
+  width: 14px;
+  height: 10px;
+  border-radius: 48% 48% 56% 56%;
+}
+
+.portrait-static-overlay,
+.portrait-static-band {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.portrait-static-overlay {
+  z-index: 5;
+}
+
 .portrait-grade-layer {
   z-index: 2;
   background:
@@ -634,7 +792,7 @@ h1 {
 }
 
 .portrait-scanline-layer {
-  z-index: 3;
+  z-index: 4;
   opacity: var(--portrait-scanline-opacity, 0.16);
   background: repeating-linear-gradient(
     180deg,
@@ -645,7 +803,7 @@ h1 {
 }
 
 .portrait-radio-layer {
-  z-index: 4;
+  z-index: 5;
   opacity: var(--portrait-state-static-opacity);
   mix-blend-mode: screen;
 }
@@ -711,14 +869,14 @@ h1 {
 }
 
 .portrait-glow-layer {
-  z-index: 6;
+  z-index: 8;
   opacity: var(--portrait-glow-intensity, 0.3);
   background: radial-gradient(circle at 50% 22%, rgba(140, 255, 192, 0.28), transparent 58%);
   mix-blend-mode: screen;
 }
 
 .portrait-transition-burst {
-  z-index: 7;
+  z-index: 9;
   opacity: 0;
   background:
     linear-gradient(180deg, rgba(235, 255, 243, 0), rgba(235, 255, 243, 0.56), rgba(235, 255, 243, 0)),
@@ -728,28 +886,6 @@ h1 {
       rgba(0, 0, 0, 0) 2px 6px
     );
   mix-blend-mode: screen;
-}
-
-.mouth-slot {
-  position: absolute;
-  left: 50%;
-  bottom: 10px;
-  z-index: 4;
-  transform: translateX(-50%);
-  width: 24px;
-  height: 6px;
-  border: 1px solid rgba(164, 255, 204, 0.18);
-  border-radius: 999px;
-  background: rgba(164, 255, 204, 0.08);
-  display: grid;
-  place-items: center;
-}
-
-.mouth-slot.open .mouth-core {
-  width: 16px;
-  height: 3px;
-  border-radius: 999px;
-  background: #d7ffe8;
 }
 
 .portrait-face[data-portrait-state="speaking"] .portrait-viewport {
@@ -776,6 +912,22 @@ h1 {
   animation: portrait-transition-burst var(--portrait-transition-burst-duration, 190ms) steps(2, end) 1;
 }
 
+.codec-machine.fx-demo-transition .portrait-frame.active,
+.codec-shell.fx-demo-transition .portrait-frame.active {
+  --portrait-state-static-opacity: var(--portrait-static-opacity-transition, 0.44);
+  --portrait-state-static-band-opacity: var(--portrait-static-band-opacity-transition, 0.48);
+  --portrait-state-static-band-speed: var(--portrait-static-band-speed-transition, 880ms);
+}
+
+.codec-machine.fx-demo-transition .portrait-transition-burst,
+.codec-shell.fx-demo-transition .portrait-transition-burst {
+  animation: portrait-transition-burst calc(var(--portrait-transition-burst-duration, 190ms) * 4.8) steps(2, end) infinite;
+}
+
+.codec-machine.fx-demo-transition .portrait-glow-layer,
+.codec-shell.fx-demo-transition .portrait-glow-layer {
+  opacity: calc(var(--portrait-glow-intensity, 0.34) + 0.08);
+}
 @keyframes portrait-static-jitter {
   0% {
     transform: translate3d(0, 0, 0);
@@ -1733,6 +1885,77 @@ h1 {
   grid-column: 1 / -1;
 }
 
+.fx-tools {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 24;
+  display: grid;
+  gap: 8px;
+  width: min(340px, calc(100vw - 24px));
+}
+
+.fx-panel {
+  border: 1px solid rgba(149, 217, 178, 0.2);
+  border-radius: 18px;
+  padding: 10px 12px;
+  background:
+    linear-gradient(180deg, rgba(9, 20, 14, 0.96), rgba(4, 10, 7, 0.98)),
+    rgba(6, 15, 11, 0.94);
+  box-shadow: 0 18px 32px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(10px);
+}
+
+.fx-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fx-panel-head strong {
+  color: #effff5;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.fx-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.fx-chip {
+  min-height: 28px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(164, 255, 204, 0.14);
+  color: #d4f8e2;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.fx-chip-active {
+  background: rgba(116, 205, 153, 0.16);
+  border-color: rgba(164, 255, 204, 0.34);
+  color: #f3fff8;
+}
+
+.fx-debug-readout {
+  margin: 8px 0 0;
+  max-height: min(34vh, 280px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #dfffee;
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
 .debug-card {
   margin: 0 0 16px;
   padding: 12px 14px;
@@ -1941,6 +2164,13 @@ h1 {
 
   .debug-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .fx-tools {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
   }
 }
 

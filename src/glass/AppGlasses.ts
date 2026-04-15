@@ -2,8 +2,8 @@ import type { AppStore } from '../app/state';
 import type { NormalizedInput, RawEventDebugInfo } from '../app/types';
 import type { BridgePagePayload } from '../bridge/startupLifecycle';
 import { CreateStartUpPageContainer, TextContainerProperty } from '@evenrealities/even_hub_sdk';
-import { selectActionItemsForGlasses, selectDialogueForGlasses, selectGlassScreenView } from './selectors';
-import { GLASSES_CONTAINERS } from './shared';
+import { selectActionItemsForGlasses, selectDialogueForGlasses, selectGlassPortraitState, selectGlassScreenView } from './selectors';
+import { GLASSES_CONTAINERS, type GlassPortraitState } from './shared';
 
 export type InputHandleResult = {
   changed: boolean;
@@ -19,7 +19,11 @@ export class AppGlasses {
   }
 
   getPortraitAssetKey() {
-    return selectGlassScreenView(this.store.getState()).portraitAsset;
+    return selectGlassPortraitState(this.store.getState()).portraitAsset;
+  }
+
+  getPortraitState(): GlassPortraitState {
+    return selectGlassPortraitState(this.store.getState());
   }
 
   getActionSeedIndex() {

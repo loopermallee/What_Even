@@ -1,5 +1,5 @@
 import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
-import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from '../app/presentation';
+import { resolveCodecPortraitState, type CodecPortraitScene } from '../app/codecPortraitState';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
 import {
@@ -11,6 +11,7 @@ import { renderDebugLog } from './components/DebugLog';
 import { renderCodecPortrait } from './components/CodecPortrait';
 import { renderSignalBars } from './components/SignalBars';
 import { renderTranscriptPanel } from './components/TranscriptPanel';
+import { CodecPortraitAnimator, type CodecPortraitAnimationFrame } from './lib/CodecPortraitAnimator';
 import { syncCodecSpritePortraits } from './lib/codecSprites';
 
 function mustQuery<T extends Element>(selector: string) {
@@ -35,6 +36,108 @@ type UserActionConfig = {
   primary: { id: string; label: string };
   secondary: { id: string; label: string };
 };
+
+type CodecAnimatedDomNodes = {
+  leftFrame: HTMLElement | null;
+  rightFrame: HTMLElement | null;
+  leftEyes: HTMLElement | null;
+  rightEyes: HTMLElement | null;
+  leftMouth: HTMLElement | null;
+  rightMouth: HTMLElement | null;
+  signalBars: HTMLElement | null;
+};
+
+type FxDemoMode = 'live' | 'idle' | 'speaking' | 'transition';
+type FxDemoSide = 'left' | 'right';
+type CodecGlitchKind = 'connect' | 'switch' | 'interrupt';
+
+type FxQueryState = {
+  demoEnabled: boolean;
+  debugEnabled: boolean;
+  demoMode: FxDemoMode;
+  demoSide: FxDemoSide;
+};
+
+type FxDebugSnapshot = {
+  screen: AppState['screen'];
+  started: boolean;
+  hostDetected: boolean;
+  speechWindow: AppState['speechWindow'];
+  demo: {
+    enabled: boolean;
+    mode: FxDemoMode;
+    side: FxDemoSide;
+  };
+  talkingMode: CodecPortraitAnimationFrame['talkingMode'];
+  activeSpeakerSide: CodecPortraitScene['activeSpeakerSide'];
+  barBucket: number;
+  glitch: string;
+  left: {
+    active: boolean;
+    expression: CodecPortraitAnimationFrame['left']['expression'];
+    blink: CodecPortraitAnimationFrame['left']['blink'];
+    mouth: CodecPortraitAnimationFrame['left']['mouth'];
+    portraitState: 'idle' | 'speaking';
+  };
+  right: {
+    active: boolean;
+    expression: CodecPortraitAnimationFrame['right']['expression'];
+    blink: CodecPortraitAnimationFrame['right']['blink'];
+    mouth: CodecPortraitAnimationFrame['right']['mouth'];
+    portraitState: 'idle' | 'speaking';
+  };
+  domHooks: {
+    leftState: string | null;
+    rightState: string | null;
+    leftExpression: string | null;
+    rightExpression: string | null;
+    leftBlink: string | null;
+    rightBlink: string | null;
+    leftMouth: string | null;
+    rightMouth: string | null;
+  };
+  layersMounted: {
+    portraitFrames: number;
+    portraitFaces: number;
+    expressionLayers: number;
+    eyesLayers: number;
+    mouthLayers: number;
+    radioLayers: number;
+    staticOverlays: number;
+    spriteCanvases: number;
+  };
+};
+
+function parseFxDemoMode(value: string | null | undefined): FxDemoMode {
+  if (value === 'idle' || value === 'speaking' || value === 'transition' || value === 'live') {
+    return value;
+  }
+
+  return 'idle';
+}
+
+function parseFxDemoSide(value: string | null | undefined): FxDemoSide {
+  return value === 'right' ? 'right' : 'left';
+}
+
+function readFxQueryState(): FxQueryState {
+  if (typeof window === 'undefined') {
+    return {
+      demoEnabled: false,
+      debugEnabled: false,
+      demoMode: 'idle',
+      demoSide: 'left',
+    };
+  }
+
+  const search = new URLSearchParams(window.location.search);
+  return {
+    demoEnabled: search.get('fxdemo') === '1',
+    debugEnabled: search.get('fxdebug') === '1',
+    demoMode: parseFxDemoMode(search.get('fxmode')),
+    demoSide: parseFxDemoSide(search.get('fxside')),
+  };
+}
 
 function getUserActionConfig(state: AppState): UserActionConfig | null {
   if (state.screen === 'contacts') {
@@ -82,165 +185,9 @@ function getUserActionConfig(state: AppState): UserActionConfig | null {
   return null;
 }
 
-type CodecDialogueSnapshot = {
-  stateLabel: string;
-  speakerLabel: string;
-  currentLine: string;
-  previousLine: string | null;
-  leftActive: boolean;
-  rightActive: boolean;
-  mouthOpen: boolean;
-  barLevel: number;
-};
-
-function shortenLine(text: string, maxChars = 92) {
-  const normalized = text.trim().replace(/\s+/g, ' ');
-  if (normalized.length <= maxChars) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
-}
-
-function getCodecBarLevel(state: AppState) {
-  if (state.screen === 'incoming') {
-    return 8;
-  }
-
-  if (state.screen === 'ended') {
-    return 2;
-  }
-
-  if (state.screen === 'active') {
-    return 7;
-  }
-
-  if (state.screen === 'listening') {
-    return Math.max(3, Math.min(10, Math.round(state.listeningActivityLevel * 10)));
-  }
-
-  return state.started ? 5 : 2;
-}
-
-function getPreviousEntryLine(state: AppState, currentIndex: number) {
-  if (currentIndex <= 0 || currentIndex >= state.transcript.length) {
-    return null;
-  }
-
-  const previous = state.transcript[currentIndex - 1];
-  return previous ? shortenLine(`${previous.speaker.toUpperCase()}: ${previous.text}`, 76) : null;
-}
-
-function getCodecDialogueSnapshot(state: AppState): CodecDialogueSnapshot {
-  const contact = CONTACTS[state.selectedContactIndex];
-  const partial = state.sttPartialTranscript.trim();
-  const latestUser = [...state.transcript].reverse().find((entry) => entry.role === 'user') ?? null;
-  const latestContact = [...state.transcript].reverse().find((entry) => entry.role === 'contact' || entry.role === 'system') ?? null;
-  const activeEntry = state.activeTranscriptCursor >= 0 ? state.transcript[state.activeTranscriptCursor] ?? null : null;
-
-  if (state.screen === 'incoming') {
-    return {
-      stateLabel: 'INCOMING CALL',
-      speakerLabel: contact.name.toUpperCase(),
-      currentLine: 'Secure incoming link request. Answer when ready.',
-      previousLine: `FREQUENCY ${contact.frequency}`,
-      leftActive: true,
-      rightActive: false,
-      mouthOpen: false,
-      barLevel: getCodecBarLevel(state),
-    };
-  }
-
-  if (state.screen === 'listening') {
-    if (partial) {
-      return {
-        stateLabel: 'SPEAK',
-        speakerLabel: 'YOU',
-        currentLine: partial,
-        previousLine: latestContact ? shortenLine(`${latestContact.speaker.toUpperCase()}: ${latestContact.text}`, 76) : null,
-        leftActive: false,
-        rightActive: true,
-        mouthOpen: true,
-        barLevel: getCodecBarLevel(state),
-      };
-    }
-
-    if (latestContact) {
-      return {
-        stateLabel: 'LISTEN',
-        speakerLabel: latestContact.speaker.toUpperCase(),
-        currentLine: latestContact.text,
-        previousLine: latestUser ? shortenLine(`${latestUser.speaker.toUpperCase()}: ${latestUser.text}`, 76) : null,
-        leftActive: true,
-        rightActive: false,
-        mouthOpen: false,
-        barLevel: getCodecBarLevel(state),
-      };
-    }
-
-    return {
-      stateLabel: 'YOUR TURN',
-      speakerLabel: 'YOU',
-      currentLine: shouldShowNoConfirmedSpeech(state)
-        ? 'No confirmed speech yet. Speak again when ready.'
-        : 'Your line is open. Speak when ready.',
-      previousLine: null,
-      leftActive: false,
-      rightActive: true,
-      mouthOpen: state.micOpen,
-      barLevel: getCodecBarLevel(state),
-    };
-  }
-
-  if (state.screen === 'active') {
-    const current = activeEntry ?? latestContact ?? latestUser;
-    const previousLine = activeEntry
-      ? getPreviousEntryLine(state, state.activeTranscriptCursor)
-      : latestContact && latestUser
-        ? shortenLine(`${latestUser.speaker.toUpperCase()}: ${latestUser.text}`, 76)
-        : null;
-
-    return {
-      stateLabel: state.responseError ? 'STAND BY' : getCanonicalTurnLabel(state.turnState).toUpperCase(),
-      speakerLabel: current?.speaker.toUpperCase() ?? contact.name.toUpperCase(),
-      currentLine: current?.text ?? 'Awaiting the next exchange.',
-      previousLine,
-      leftActive: current?.role === 'contact' || current?.role === 'system',
-      rightActive: current?.role === 'user',
-      mouthOpen: false,
-      barLevel: getCodecBarLevel(state),
-    };
-  }
-
-  if (state.screen === 'ended') {
-    const latestLine = state.transcript.length > 0
-      ? state.transcript[state.transcript.length - 1]
-      : null;
-
-    return {
-      stateLabel: 'CALL ENDED',
-      speakerLabel: 'SYSTEM',
-      currentLine: 'Codec link closed. Redial or return to directory.',
-      previousLine: latestLine ? shortenLine(`${latestLine.speaker.toUpperCase()}: ${latestLine.text}`, 76) : null,
-      leftActive: false,
-      rightActive: false,
-      mouthOpen: false,
-      barLevel: getCodecBarLevel(state),
-    };
-  }
-
-  return {
-    stateLabel: state.started ? 'STAND BY' : 'SETUP',
-    speakerLabel: 'SYSTEM',
-    currentLine: state.started
-      ? 'Select a contact and start the codec link.'
-      : 'Start on Even to arm the mobile codec companion.',
-    previousLine: `${contact.name.toUpperCase()} TUNED ${contact.frequency}`,
-    leftActive: false,
-    rightActive: false,
-    mouthOpen: false,
-    barLevel: getCodecBarLevel(state),
-  };
+function getScriptedSpeechWindowDurationMs(text: string) {
+  const normalizedLength = text.trim().replace(/\s+/g, ' ').length;
+  return Math.max(420, Math.min(2400, 220 + normalizedLength * 28));
 }
 
 function getRawStateSnapshot(state: AppState) {
@@ -287,6 +234,7 @@ function getRawStateSnapshot(state: AppState) {
       activeTranscriptCursor: state.activeTranscriptCursor,
       transcriptLength: state.transcript.length,
     },
+    speechWindow: state.speechWindow,
     reliability: state.reliability,
     imageSync: state.imageSync,
   };
@@ -304,20 +252,49 @@ function getLatestRuntimeError(state: AppState) {
 export class AppWeb {
   private readonly store: AppStore;
   private readonly startOnEven: (options?: { forceReset?: boolean }) => Promise<void>;
+  private readonly portraitAnimator: CodecPortraitAnimator;
   private unsubscribe: (() => void) | null = null;
   private readonly lifecycleRaceHarness: LifecycleRaceHarness;
+  private readonly fxDemoEnabled: boolean;
+  private readonly fxDebugEnabled: boolean;
   private contactPickerOpen = false;
   private debugDrawerOpen = false;
   private previousState: AppState | null = null;
-  private activeCodecGlitch: 'connect' | 'switch' | 'interrupt' | null = null;
+  private activeCodecGlitch: CodecGlitchKind | null = null;
   private codecGlitchTimer: number | null = null;
+  private scriptedSpeechWindowTimer: number | null = null;
+  private scheduledSpeechWindowEntryId: number | null = null;
+  private fxDemoMode: FxDemoMode;
+  private fxDemoSide: FxDemoSide;
+  private lastRenderedState: AppState | null = null;
+  private lastRenderedScene: CodecPortraitScene | null = null;
+  private lastEffectiveGlitch: CodecGlitchKind | null = null;
+  private animatedNodes: CodecAnimatedDomNodes = {
+    leftFrame: null,
+    rightFrame: null,
+    leftEyes: null,
+    rightEyes: null,
+    leftMouth: null,
+    rightMouth: null,
+    signalBars: null,
+  };
 
   constructor(options: {
     store: AppStore;
     startOnEven: (options?: { forceReset?: boolean }) => Promise<void>;
   }) {
+    const fxQueryState = readFxQueryState();
     this.store = options.store;
     this.startOnEven = options.startOnEven;
+    this.fxDemoEnabled = fxQueryState.demoEnabled;
+    this.fxDebugEnabled = fxQueryState.debugEnabled;
+    this.fxDemoMode = fxQueryState.demoMode;
+    this.fxDemoSide = fxQueryState.demoSide;
+    this.portraitAnimator = new CodecPortraitAnimator({
+      onUpdate: (frame) => {
+        this.applyAnimatedPortraitFrame(frame);
+      },
+    });
     this.lifecycleRaceHarness = new LifecycleRaceHarness({
       store: this.store,
       onUpdate: () => {
@@ -351,6 +328,19 @@ export class AppWeb {
       window.clearTimeout(this.codecGlitchTimer);
       this.codecGlitchTimer = null;
     }
+
+    this.clearSpeechWindowTimer();
+    this.portraitAnimator.destroy();
+    this.animatedNodes = {
+      leftFrame: null,
+      rightFrame: null,
+      leftEyes: null,
+      rightEyes: null,
+      leftMouth: null,
+      rightMouth: null,
+      signalBars: null,
+    };
+    this.store.cancelSpeechWindow();
   }
 
   private render(state: AppState) {
@@ -360,12 +350,38 @@ export class AppWeb {
     }
 
     const root = mustQuery<HTMLDivElement>('#webRoot');
+    const baseScene = resolveCodecPortraitState(state);
+    this.syncScriptedSpeechWindowTimer(state, baseScene);
+    const scene = this.getEffectivePortraitScene(baseScene);
+    this.portraitAnimator.setScene(scene);
+    const animationFrame = this.portraitAnimator.getSnapshot();
+    const effectiveGlitch = this.getEffectiveCodecGlitch();
+    this.lastRenderedState = state;
+    this.lastRenderedScene = scene;
+    this.lastEffectiveGlitch = effectiveGlitch;
 
     root.innerHTML = state.screen === 'debug'
       ? this.renderDebugView(state)
-      : this.renderUserView(state);
+      : this.renderUserView(state, scene, animationFrame, effectiveGlitch);
 
-    syncCodecSpritePortraits(root);
+    if (state.screen === 'debug') {
+      this.lastRenderedScene = null;
+      this.lastEffectiveGlitch = null;
+      this.animatedNodes = {
+        leftFrame: null,
+        rightFrame: null,
+        leftEyes: null,
+        rightEyes: null,
+        leftMouth: null,
+        rightMouth: null,
+        signalBars: null,
+      };
+    } else {
+      syncCodecSpritePortraits(root);
+      this.captureAnimatedNodes(root);
+      this.applyAnimatedPortraitFrame(animationFrame);
+      this.syncFxDebugReadout(root, state, scene, animationFrame, effectiveGlitch);
+    }
     this.bindControls(state);
     this.bindLifecycleHarnessControls();
     this.previousState = state;
@@ -374,7 +390,7 @@ export class AppWeb {
   private getCodecGlitchEvent(
     previousState: AppState | null,
     state: AppState,
-  ): 'connect' | 'switch' | 'interrupt' | null {
+  ): CodecGlitchKind | null {
     if (!previousState || state.screen === 'debug') {
       return null;
     }
@@ -398,7 +414,7 @@ export class AppWeb {
     return null;
   }
 
-  private triggerCodecGlitch(kind: 'connect' | 'switch' | 'interrupt') {
+  private triggerCodecGlitch(kind: CodecGlitchKind) {
     this.activeCodecGlitch = kind;
 
     if (this.codecGlitchTimer !== null) {
@@ -413,13 +429,229 @@ export class AppWeb {
     }, durationMs);
   }
 
-  private renderUserView(state: AppState) {
+  private getEffectivePortraitScene(scene: CodecPortraitScene): CodecPortraitScene {
+    if (!this.fxDemoEnabled || this.fxDemoMode === 'live') {
+      return scene;
+    }
+
+    const demoLeftActive = this.fxDemoSide === 'left';
+    const demoRightActive = this.fxDemoSide === 'right';
+    const demoExpression = this.fxDemoMode === 'transition'
+      ? 'surprised'
+      : this.fxDemoMode === 'speaking'
+        ? 'stern'
+        : 'idle';
+    const demoStateLabel = this.fxDemoMode === 'transition'
+      ? 'FX TRANSITION'
+      : this.fxDemoMode === 'speaking'
+        ? 'FX SPEAKING'
+        : 'FX IDLE';
+    const demoSpeakerLabel = demoLeftActive
+      ? scene.left.label
+      : scene.right.label;
+    const demoLine = this.fxDemoMode === 'transition'
+      ? 'FX demo holds the stronger transition state so you can verify burst and static escalation.'
+      : this.fxDemoMode === 'speaking'
+        ? 'FX demo forces scripted speaking so stepped mouth and quantized bars stay visible in a regular browser.'
+        : 'FX demo holds an idle portrait so restrained motion remains visible without host or STT activity.';
+
+    return {
+      ...scene,
+      stateLabel: demoStateLabel,
+      speakerLabel: demoSpeakerLabel,
+      currentLine: demoLine,
+      previousLine: this.fxDemoMode === 'idle'
+        ? 'Browser-safe verification path active.'
+        : scene.previousLine,
+      activeSpeakerSide: this.fxDemoSide,
+      talkingMode: this.fxDemoMode === 'idle' ? 'silent' : 'scripted_text',
+      currentEntryId: null,
+      currentRole: demoLeftActive ? 'contact' : 'user',
+      signalBarBase: this.fxDemoMode === 'transition' ? 8 : this.fxDemoMode === 'speaking' ? 6 : 3,
+      listeningActivityLevel: 0,
+      left: {
+        ...scene.left,
+        active: demoLeftActive,
+        expression: demoLeftActive ? demoExpression : 'idle',
+        role: demoLeftActive ? 'contact' : null,
+        entryId: null,
+      },
+      right: {
+        ...scene.right,
+        active: demoRightActive,
+        expression: demoRightActive
+          ? (this.fxDemoMode === 'transition' ? 'angry' : 'stern')
+          : 'stern',
+        role: demoRightActive ? 'user' : null,
+        entryId: null,
+      },
+    };
+  }
+
+  private getEffectiveCodecGlitch() {
+    if (this.fxDemoEnabled && this.fxDemoMode === 'transition') {
+      return 'connect' as const;
+    }
+
+    return this.activeCodecGlitch;
+  }
+
+  private updateFxQueryState() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (this.fxDemoEnabled) {
+      url.searchParams.set('fxdemo', '1');
+      url.searchParams.set('fxmode', this.fxDemoMode);
+      url.searchParams.set('fxside', this.fxDemoSide);
+    }
+
+    if (this.fxDebugEnabled) {
+      url.searchParams.set('fxdebug', '1');
+    }
+
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  private renderFxPanels() {
+    if (!this.fxDemoEnabled && !this.fxDebugEnabled) {
+      return '';
+    }
+
+    const modeButton = (mode: FxDemoMode, label: string) => `
+      <button
+        type="button"
+        class="fx-chip ${this.fxDemoMode === mode ? 'fx-chip-active' : ''}"
+        data-fx-demo-mode="${mode}"
+      >${label}</button>
+    `;
+    const sideButton = (side: FxDemoSide, label: string) => `
+      <button
+        type="button"
+        class="fx-chip ${this.fxDemoSide === side ? 'fx-chip-active' : ''}"
+        data-fx-demo-side="${side}"
+      >${label}</button>
+    `;
+
+    return `
+      <div class="fx-tools">
+        ${this.fxDemoEnabled ? `
+          <section class="fx-panel fx-panel-demo" aria-label="Portrait FX demo">
+            <div class="fx-panel-head">
+              <span class="section-label">FX Demo</span>
+              <strong>${escapeHtml(this.fxDemoMode.toUpperCase())}</strong>
+            </div>
+            <div class="fx-chip-row">
+              ${modeButton('live', 'Live')}
+              ${modeButton('idle', 'Idle')}
+              ${modeButton('speaking', 'Speaking')}
+              ${modeButton('transition', 'Transition')}
+            </div>
+            <div class="fx-chip-row">
+              ${sideButton('left', 'Contact')}
+              ${sideButton('right', 'User')}
+            </div>
+          </section>
+        ` : ''}
+        ${this.fxDebugEnabled ? `
+          <section class="fx-panel fx-panel-debug" aria-label="Portrait FX debug">
+            <div class="fx-panel-head">
+              <span class="section-label">FX Debug</span>
+              <strong>Live State</strong>
+            </div>
+            <pre id="fxDebugReadout" class="fx-debug-readout"></pre>
+          </section>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  private syncFxDebugReadout(
+    root: ParentNode,
+    state: AppState,
+    scene: CodecPortraitScene,
+    animationFrame: CodecPortraitAnimationFrame,
+    effectiveGlitch: CodecGlitchKind | null,
+  ) {
+    if (!this.fxDebugEnabled) {
+      return;
+    }
+
+    const readout = root.querySelector<HTMLPreElement>('#fxDebugReadout');
+    if (!readout) {
+      return;
+    }
+
+    const leftFace = root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-face');
+    const rightFace = root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-face');
+    const snapshot: FxDebugSnapshot = {
+      screen: state.screen,
+      started: state.started,
+      hostDetected: state.evenNativeHostDetected,
+      speechWindow: state.speechWindow,
+      demo: {
+        enabled: this.fxDemoEnabled,
+        mode: this.fxDemoMode,
+        side: this.fxDemoSide,
+      },
+      talkingMode: animationFrame.talkingMode,
+      activeSpeakerSide: scene.activeSpeakerSide,
+      barBucket: animationFrame.barBucket,
+      glitch: effectiveGlitch ?? 'none',
+      left: {
+        active: animationFrame.left.active,
+        expression: animationFrame.left.expression,
+        blink: animationFrame.left.blink,
+        mouth: animationFrame.left.mouth,
+        portraitState: animationFrame.left.active && animationFrame.left.mouth !== 'closed' ? 'speaking' : 'idle',
+      },
+      right: {
+        active: animationFrame.right.active,
+        expression: animationFrame.right.expression,
+        blink: animationFrame.right.blink,
+        mouth: animationFrame.right.mouth,
+        portraitState: animationFrame.right.active && animationFrame.right.mouth !== 'closed' ? 'speaking' : 'idle',
+      },
+      domHooks: {
+        leftState: leftFace?.dataset.portraitState ?? null,
+        rightState: rightFace?.dataset.portraitState ?? null,
+        leftExpression: leftFace?.dataset.portraitExpression ?? null,
+        rightExpression: rightFace?.dataset.portraitExpression ?? null,
+        leftBlink: this.animatedNodes.leftEyes?.dataset.blinkState ?? null,
+        rightBlink: this.animatedNodes.rightEyes?.dataset.blinkState ?? null,
+        leftMouth: this.animatedNodes.leftMouth?.dataset.mouthFrame ?? null,
+        rightMouth: this.animatedNodes.rightMouth?.dataset.mouthFrame ?? null,
+      },
+      layersMounted: {
+        portraitFrames: root.querySelectorAll('.portrait-frame').length,
+        portraitFaces: root.querySelectorAll('.portrait-face').length,
+        expressionLayers: root.querySelectorAll('.portrait-expression-layer').length,
+        eyesLayers: root.querySelectorAll('.portrait-eyes-layer').length,
+        mouthLayers: root.querySelectorAll('.portrait-mouth-layer').length,
+        radioLayers: root.querySelectorAll('.portrait-radio-layer').length,
+        staticOverlays: root.querySelectorAll('.portrait-static-overlay').length,
+        spriteCanvases: root.querySelectorAll('.codec-sprite-canvas').length,
+      },
+    };
+
+    readout.textContent = JSON.stringify(snapshot, null, 2);
+    (window as Window & { __WHAT_EVEN_FX__?: FxDebugSnapshot }).__WHAT_EVEN_FX__ = snapshot;
+  }
+
+  private renderUserView(
+    state: AppState,
+    scene: CodecPortraitScene,
+    animationFrame: CodecPortraitAnimationFrame,
+    effectiveGlitch: CodecGlitchKind | null,
+  ) {
     const contact = CONTACTS[state.selectedContactIndex];
     const actions = getUserActionConfig(state);
-    const snapshot = getCodecDialogueSnapshot(state);
     const pickerVisible = state.screen === 'contacts' && this.contactPickerOpen;
     const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
     const latestError = getLatestRuntimeError(state);
+    const isSpeaking = animationFrame.talkingMode !== 'silent';
     const surfaceMode = state.screen === 'contacts'
       ? 'Directory standby'
       : state.screen === 'incoming'
@@ -433,15 +665,19 @@ export class AppWeb {
       label: contact.name.toUpperCase(),
       tag: contact.portraitTag,
       characterId: contact.characterId,
-      active: snapshot.leftActive,
-      mouthOpen: snapshot.leftActive && snapshot.mouthOpen,
+      active: animationFrame.left.active,
+      expression: animationFrame.left.expression,
+      blink: animationFrame.left.blink,
+      mouth: animationFrame.left.mouth,
     });
     const rightPortrait = renderCodecPortrait({
       label: RIGHT_CHARACTER.name.toUpperCase(),
       tag: RIGHT_CHARACTER.portraitTag,
       characterId: RIGHT_CHARACTER.characterId,
-      active: snapshot.rightActive,
-      mouthOpen: snapshot.rightActive && snapshot.mouthOpen,
+      active: animationFrame.right.active,
+      expression: animationFrame.right.expression,
+      blink: animationFrame.right.blink,
+      mouth: animationFrame.right.mouth,
     });
 
     return `
@@ -467,7 +703,7 @@ export class AppWeb {
         </div>
 
         <section class="codec-stage">
-          <div class="codec-machine ${this.activeCodecGlitch ? `codec-glitch-${this.activeCodecGlitch}` : ''} ${snapshot.mouthOpen ? 'codec-machine-speaking' : 'codec-machine-idle'}">
+          <div class="codec-machine ${effectiveGlitch ? `codec-glitch-${effectiveGlitch}` : ''} ${this.fxDemoEnabled && this.fxDemoMode === 'transition' ? 'fx-demo-transition' : ''} ${isSpeaking ? 'codec-machine-speaking' : 'codec-machine-idle'}">
             <div class="codec-transmission-layers" aria-hidden="true">
               <div class="codec-noise-layer"></div>
               <div class="codec-crt-layer"></div>
@@ -483,8 +719,8 @@ export class AppWeb {
               </div>
               <div class="codec-status-cell codec-status-cell-center">
                 <span class="section-label">Channel</span>
-                <strong>${escapeHtml(snapshot.stateLabel)}</strong>
-                <span>${escapeHtml(snapshot.speakerLabel)}</span>
+                <strong>${escapeHtml(scene.stateLabel)}</strong>
+                <span>${escapeHtml(scene.speakerLabel)}</span>
               </div>
               <div class="codec-status-cell codec-status-cell-right">
                 <span class="section-label">Bridge</span>
@@ -506,15 +742,15 @@ export class AppWeb {
                 <div class="codec-center-cap">PTT</div>
                 <div class="signal-screen">
                   <div class="signal-screen-grid">
-                    <div class="signal-bars">${renderSignalBars(snapshot.barLevel)}</div>
+                    <div class="signal-bars">${renderSignalBars(animationFrame.barBucket)}</div>
                     <div class="frequency-stack">
                       <span class="signal-label">TUNE</span>
                       <strong>${escapeHtml(contact.frequency)}</strong>
-                      <span class="signal-subtitle">${escapeHtml(snapshot.stateLabel)}</span>
+                      <span class="signal-subtitle">${escapeHtml(scene.stateLabel)}</span>
                     </div>
                   </div>
                 </div>
-                <div class="codec-center-cap bottom">${escapeHtml(snapshot.speakerLabel)}</div>
+                <div class="codec-center-cap bottom">${escapeHtml(scene.speakerLabel)}</div>
               </div>
 
               <div class="codec-portrait-bay codec-portrait-bay-right">
@@ -532,14 +768,14 @@ export class AppWeb {
                   <div>
                     <span class="section-label">Live Dialogue</span>
                     <div class="codec-dialogue-speaker-row">
-                      <span class="dialogue-speaker">${escapeHtml(snapshot.speakerLabel)}</span>
+                      <span class="dialogue-speaker">${escapeHtml(scene.speakerLabel)}</span>
                       <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
                     </div>
                   </div>
-                  <span class="codec-state-pill">${escapeHtml(snapshot.stateLabel)}</span>
+                  <span class="codec-state-pill">${escapeHtml(scene.stateLabel)}</span>
                 </div>
-                <div class="dialogue-current-line">${escapeHtml(snapshot.currentLine)}</div>
-                ${snapshot.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(snapshot.previousLine)}</div>` : ''}
+                <div class="dialogue-current-line">${escapeHtml(scene.currentLine)}</div>
+                ${scene.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(scene.previousLine)}</div>` : ''}
               </div>
 
               <div class="codec-transcript-deck">
@@ -660,8 +896,112 @@ export class AppWeb {
             </label>
           </div>
         ` : ''}
+        ${this.renderFxPanels()}
       </div>
     `;
+  }
+
+  private syncScriptedSpeechWindowTimer(state: AppState, scene: CodecPortraitScene) {
+    if (
+      state.screen === 'debug'
+      || !state.speechWindow.isOpen
+      || state.speechWindow.source !== 'scripted_text'
+      || state.speechWindow.entryId === null
+    ) {
+      this.clearSpeechWindowTimer();
+      return;
+    }
+
+    if (this.scheduledSpeechWindowEntryId === state.speechWindow.entryId) {
+      return;
+    }
+
+    this.clearSpeechWindowTimer();
+    this.scheduledSpeechWindowEntryId = state.speechWindow.entryId;
+    this.scriptedSpeechWindowTimer = window.setTimeout(() => {
+      this.scriptedSpeechWindowTimer = null;
+      const currentState = this.store.getState();
+      if (
+        currentState.speechWindow.isOpen
+        && currentState.speechWindow.source === 'scripted_text'
+        && currentState.speechWindow.entryId === state.speechWindow.entryId
+      ) {
+        this.store.closeSpeechWindow();
+      }
+    }, getScriptedSpeechWindowDurationMs(scene.currentLine));
+  }
+
+  private clearSpeechWindowTimer() {
+    if (this.scriptedSpeechWindowTimer !== null) {
+      window.clearTimeout(this.scriptedSpeechWindowTimer);
+      this.scriptedSpeechWindowTimer = null;
+    }
+
+    this.scheduledSpeechWindowEntryId = null;
+  }
+
+  private captureAnimatedNodes(root: ParentNode) {
+    this.animatedNodes = {
+      leftFrame: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-frame'),
+      rightFrame: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-frame'),
+      leftEyes: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-eyes-layer'),
+      rightEyes: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-eyes-layer'),
+      leftMouth: root.querySelector<HTMLElement>('.codec-portrait-bay-left .portrait-mouth-layer'),
+      rightMouth: root.querySelector<HTMLElement>('.codec-portrait-bay-right .portrait-mouth-layer'),
+      signalBars: root.querySelector<HTMLElement>('.signal-bars'),
+    };
+  }
+
+  private applyAnimatedPortraitFrame(frame: CodecPortraitAnimationFrame) {
+    const {
+      leftFrame,
+      rightFrame,
+      leftEyes,
+      rightEyes,
+      leftMouth,
+      rightMouth,
+      signalBars,
+    } = this.animatedNodes;
+
+    if (leftFrame) {
+      leftFrame.classList.toggle('active', frame.left.active);
+    }
+    if (rightFrame) {
+      rightFrame.classList.toggle('active', frame.right.active);
+    }
+
+    if (leftEyes) {
+      leftEyes.dataset.blinkState = frame.left.blink;
+    }
+    if (rightEyes) {
+      rightEyes.dataset.blinkState = frame.right.blink;
+    }
+
+    if (leftMouth) {
+      leftMouth.dataset.mouthFrame = frame.left.mouth;
+    }
+    if (rightMouth) {
+      rightMouth.dataset.mouthFrame = frame.right.mouth;
+    }
+
+    if (signalBars) {
+      signalBars.innerHTML = renderSignalBars(frame.barBucket);
+    }
+
+    if (
+      this.fxDebugEnabled
+      && this.lastRenderedState
+      && this.lastRenderedScene
+      && document.querySelector('#fxDebugReadout')
+    ) {
+      this.syncFxDebugReadout(
+        document,
+        this.lastRenderedState,
+        this.lastRenderedScene,
+        frame,
+        this.lastEffectiveGlitch,
+      );
+    }
   }
 
   private renderDebugView(state: AppState) {
@@ -1035,6 +1375,26 @@ export class AppWeb {
       clearLogBtn.onclick = () => {
         this.store.clearLogs();
       };
+    }
+
+    if (this.fxDemoEnabled) {
+      const fxModeButtons = document.querySelectorAll<HTMLButtonElement>('[data-fx-demo-mode]');
+      for (const button of fxModeButtons) {
+        button.onclick = () => {
+          this.fxDemoMode = parseFxDemoMode(button.dataset.fxDemoMode);
+          this.updateFxQueryState();
+          this.render(this.store.getState());
+        };
+      }
+
+      const fxSideButtons = document.querySelectorAll<HTMLButtonElement>('[data-fx-demo-side]');
+      for (const button of fxSideButtons) {
+        button.onclick = () => {
+          this.fxDemoSide = parseFxDemoSide(button.dataset.fxDemoSide);
+          this.updateFxQueryState();
+          this.render(this.store.getState());
+        };
+      }
     }
 
     const logEl = document.querySelector<HTMLPreElement>('#log');

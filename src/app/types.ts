@@ -1,9 +1,15 @@
 export type SpeakerSide = 'left' | 'right';
 export type CodecCharacterId = 'snake' | 'otacon' | 'meryl' | 'colonel';
+export type CodecExpression = 'idle' | 'stern' | 'angry' | 'surprised' | 'thinking' | 'hurt';
+export type CodecBlinkState = 'open' | 'closing' | 'closed' | 'opening';
+export type CodecMouthFrame = 'closed' | 'half' | 'open';
+export type CodecTalkingMode = 'silent' | 'scripted_text' | 'live_audio';
+export type SpeechWindowSource = 'none' | 'scripted_text' | 'live_audio';
 
 export type DialogueLine = {
   speaker: SpeakerSide;
   text: string;
+  emotion?: CodecExpression;
 };
 
 export type Contact = {
@@ -52,6 +58,14 @@ export type TranscriptEntry = {
   text: string;
   contactName: string;
   createdAt: number;
+  emotion?: CodecExpression;
+};
+
+export type SpeechWindowState = {
+  isOpen: boolean;
+  source: SpeechWindowSource;
+  entryId: number | null;
+  role: TranscriptEntry['role'] | null;
 };
 
 export type TurnState = 'idle' | 'awaiting_user' | 'processing_user' | 'responding' | 'complete' | 'error';
@@ -131,6 +145,7 @@ export type AppState = {
   lastTranscriptAt: number | null;
   sttError: string | null;
   listeningSessionId: number;
+  speechWindow: SpeechWindowState;
   reliability: ReliabilityDebugInfo;
   logs: string[];
 };

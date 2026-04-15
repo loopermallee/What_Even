@@ -15,9 +15,9 @@ export const CONTACTS: Contact[] = [
     portraitTag: 'CO',
     characterId: 'colonel',
     dialogue: [
-      { speaker: 'left', text: 'Snake, codec check. Your signal is stable now.' },
+      { speaker: 'left', text: 'Snake, codec check. Your signal is stable now.', emotion: 'stern' },
       { speaker: 'right', text: 'I read you. What is the situation?' },
-      { speaker: 'left', text: 'Stay low, move carefully, and avoid drawing attention.' },
+      { speaker: 'left', text: 'Stay low, move carefully, and avoid drawing attention.', emotion: 'stern' },
       { speaker: 'right', text: 'Understood. I will move once the path is clear.' },
     ],
   },
@@ -28,7 +28,7 @@ export const CONTACTS: Contact[] = [
     portraitTag: 'OT',
     characterId: 'otacon',
     dialogue: [
-      { speaker: 'left', text: 'Snake, I can keep an eye on the system feed from here.' },
+      { speaker: 'left', text: 'Snake, I can keep an eye on the system feed from here.', emotion: 'thinking' },
       { speaker: 'right', text: 'Good. Let me know if anything changes.' },
       { speaker: 'left', text: 'If the patrol route shifts, I will call it out immediately.' },
       { speaker: 'right', text: 'That is all I need. Stay sharp.' },
@@ -43,7 +43,7 @@ export const CONTACTS: Contact[] = [
     dialogue: [
       { speaker: 'left', text: 'Snake, I am in position. The route ahead is still open.' },
       { speaker: 'right', text: 'Good. Keep your head down and do not rush it.' },
-      { speaker: 'left', text: 'Relax. I know what I am doing.' },
+      { speaker: 'left', text: 'Relax. I know what I am doing.', emotion: 'angry' },
       { speaker: 'right', text: 'Fine. Just stay on comms.' },
     ],
   },
