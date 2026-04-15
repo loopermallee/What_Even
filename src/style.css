@@ -477,10 +477,10 @@ h1 {
 }
 
 .portrait-frame {
-  --portrait-static-opacity: 0.12;
-  --portrait-static-band-opacity: 0.16;
-  --portrait-static-band-speed: 4.8s;
-  --portrait-static-jitter-speed: 1.15s;
+  --portrait-state-static-opacity: var(--portrait-static-opacity-idle, 0.08);
+  --portrait-state-static-band-opacity: var(--portrait-static-band-opacity-idle, 0.12);
+  --portrait-state-static-band-speed: var(--portrait-static-band-speed-idle, 5200ms);
+  --portrait-state-jitter-intensity: 0;
   display: grid;
   grid-template-rows: auto minmax(136px, 1fr) auto;
   min-height: 100%;
@@ -495,9 +495,6 @@ h1 {
 }
 
 .portrait-frame.active {
-  --portrait-static-opacity: 0.18;
-  --portrait-static-band-opacity: 0.24;
-  --portrait-static-band-speed: 3.6s;
   border-color: var(--codec-border-strong);
   box-shadow:
     inset 0 0 0 1px rgba(229, 255, 238, 0.09),
@@ -549,6 +546,13 @@ h1 {
   overflow: hidden;
 }
 
+.portrait-face[data-portrait-state="speaking"] {
+  --portrait-state-static-opacity: var(--portrait-static-opacity-speaking, 0.16);
+  --portrait-state-static-band-opacity: var(--portrait-static-band-opacity-speaking, 0.2);
+  --portrait-state-static-band-speed: var(--portrait-static-band-speed-speaking, 3400ms);
+  --portrait-state-jitter-intensity: 1;
+}
+
 .portrait-viewport {
   position: relative;
   flex: 1 1 auto;
@@ -593,9 +597,11 @@ h1 {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   filter:
-    saturate(1.03)
-    contrast(1.05)
-    drop-shadow(0 0 14px rgba(101, 202, 137, 0.14));
+    grayscale(calc(0.96 * var(--portrait-monochrome-strength, 0.86)))
+    sepia(calc(0.34 * var(--portrait-monochrome-strength, 0.86)))
+    saturate(var(--portrait-posterize-boost, 1.05))
+    brightness(var(--portrait-brightness, 1.03))
+    contrast(var(--portrait-contrast, 1.12));
 }
 
 .portrait-face.sprite-ready .codec-sprite-canvas {
@@ -607,20 +613,44 @@ h1 {
   display: none;
 }
 
-.portrait-static-overlay,
-.portrait-static-band {
+.portrait-grade-layer,
+.portrait-scanline-layer,
+.portrait-radio-layer,
+.portrait-static-band,
+.portrait-interference-sweep,
+.portrait-transition-burst,
+.portrait-glow-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-.portrait-static-overlay {
-  z-index: 3;
-  opacity: var(--portrait-static-opacity);
+.portrait-grade-layer {
+  z-index: 2;
+  background:
+    linear-gradient(180deg, rgba(154, 255, 200, 0.1), rgba(3, 24, 13, 0.28)),
+    linear-gradient(90deg, rgba(13, 42, 26, 0.1), rgba(115, 255, 170, 0.06), rgba(9, 35, 20, 0.14));
   mix-blend-mode: screen;
 }
 
-.portrait-static-overlay::before {
+.portrait-scanline-layer {
+  z-index: 3;
+  opacity: var(--portrait-scanline-opacity, 0.16);
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(242, 255, 248, 0.06) 0 1px,
+    rgba(0, 0, 0, 0) 1px var(--portrait-scanline-spacing, 3px)
+  );
+  mix-blend-mode: screen;
+}
+
+.portrait-radio-layer {
+  z-index: 4;
+  opacity: var(--portrait-state-static-opacity);
+  mix-blend-mode: screen;
+}
+
+.portrait-radio-layer::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -642,10 +672,10 @@ h1 {
       rgba(255, 255, 255, 0.08) 48%,
       rgba(0, 0, 0, 0.04) 100%
     );
-  animation: portrait-static-jitter var(--portrait-static-jitter-speed) steps(6) infinite;
+  animation: portrait-static-jitter calc(var(--portrait-jitter-frequency, 780ms) * 1.42) steps(6) infinite;
 }
 
-.portrait-static-overlay::after {
+.portrait-radio-layer::after {
   content: "";
   position: absolute;
   inset: -20% 0;
@@ -659,12 +689,45 @@ h1 {
   background: linear-gradient(
     180deg,
     transparent 0%,
-    rgb(228 255 238 / var(--portrait-static-band-opacity)) 48%,
+    rgb(228 255 238 / var(--portrait-state-static-band-opacity)) 48%,
     transparent 100%
   );
-  opacity: 0.55;
+  opacity: 0.5;
   transform: translateY(-120%);
-  animation: portrait-static-band var(--portrait-static-band-speed) linear infinite;
+  animation: portrait-static-band var(--portrait-state-static-band-speed) linear infinite;
+}
+
+.portrait-interference-sweep {
+  opacity: var(--portrait-sweep-opacity, 0.2);
+  mix-blend-mode: screen;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(231, 255, 241, 0.08) 48%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  animation: portrait-interference-sweep 5.8s linear infinite;
+}
+
+.portrait-glow-layer {
+  z-index: 6;
+  opacity: var(--portrait-glow-intensity, 0.3);
+  background: radial-gradient(circle at 50% 22%, rgba(140, 255, 192, 0.28), transparent 58%);
+  mix-blend-mode: screen;
+}
+
+.portrait-transition-burst {
+  z-index: 7;
+  opacity: 0;
+  background:
+    linear-gradient(180deg, rgba(235, 255, 243, 0), rgba(235, 255, 243, 0.56), rgba(235, 255, 243, 0)),
+    repeating-linear-gradient(
+      180deg,
+      rgba(242, 255, 248, 0.24) 0 2px,
+      rgba(0, 0, 0, 0) 2px 6px
+    );
+  mix-blend-mode: screen;
 }
 
 .mouth-slot {
@@ -687,6 +750,30 @@ h1 {
   height: 3px;
   border-radius: 999px;
   background: #d7ffe8;
+}
+
+.portrait-face[data-portrait-state="speaking"] .portrait-viewport {
+  animation: portrait-speaking-jitter var(--portrait-jitter-frequency, 780ms) steps(1, end) infinite;
+}
+
+.codec-machine.codec-glitch-connect .portrait-frame.active,
+.codec-machine.codec-glitch-switch .portrait-frame.active,
+.codec-machine.codec-glitch-interrupt .portrait-frame.active,
+.codec-shell.codec-glitch-connect .portrait-frame.active,
+.codec-shell.codec-glitch-switch .portrait-frame.active,
+.codec-shell.codec-glitch-interrupt .portrait-frame.active {
+  --portrait-state-static-opacity: var(--portrait-static-opacity-transition, 0.36);
+  --portrait-state-static-band-opacity: var(--portrait-static-band-opacity-transition, 0.4);
+  --portrait-state-static-band-speed: var(--portrait-static-band-speed-transition, 1100ms);
+}
+
+.codec-machine.codec-glitch-connect .portrait-transition-burst,
+.codec-machine.codec-glitch-switch .portrait-transition-burst,
+.codec-machine.codec-glitch-interrupt .portrait-transition-burst,
+.codec-shell.codec-glitch-connect .portrait-transition-burst,
+.codec-shell.codec-glitch-switch .portrait-transition-burst,
+.codec-shell.codec-glitch-interrupt .portrait-transition-burst {
+  animation: portrait-transition-burst var(--portrait-transition-burst-duration, 190ms) steps(2, end) 1;
 }
 
 @keyframes portrait-static-jitter {
@@ -742,6 +829,44 @@ h1 {
 
   100% {
     transform: translate3d(0, -8%, 0);
+  }
+}
+
+@keyframes portrait-interference-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes portrait-transition-burst {
+  0% {
+    opacity: 0;
+    transform: translateY(-18%);
+  }
+
+  20% {
+    opacity: var(--portrait-transition-burst-intensity, 0.72);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(18%);
+  }
+}
+
+@keyframes portrait-speaking-jitter {
+  0%,
+  74%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  75% {
+    transform: translate3d(var(--portrait-jitter-magnitude, 1px), 0, 0);
   }
 }
 
@@ -825,12 +950,44 @@ h1 {
   border-radius: 999px 999px 1px 1px;
   background: rgba(138, 182, 157, 0.12);
   border: 1px solid rgba(164, 255, 204, 0.06);
+  transform: translateY(0);
+  animation: signal-bar-idle-drift var(--signal-idle-duration, 1500ms) ease-in-out infinite;
+  animation-delay: calc(var(--signal-bar-phase, 0) * -120ms);
 }
 
 .signal-bar.active {
   background: linear-gradient(180deg, #d9ffe9, #73cf98);
   border-color: rgba(214, 255, 232, 0.72);
   box-shadow: 0 0 14px rgba(116, 214, 156, 0.24);
+}
+
+.codec-machine-speaking .signal-bar.active,
+.codec-shell.codec-machine-speaking .signal-bar.active {
+  animation-duration: var(--signal-speaking-duration, 760ms);
+  transform: translateY(calc(-1 * var(--signal-speaking-amplitude, 2px) / 2));
+}
+
+.signal-bar-low.active {
+  box-shadow: 0 0 10px rgba(116, 214, 156, 0.17);
+}
+
+.signal-bar-mid.active {
+  box-shadow: 0 0 12px rgba(116, 214, 156, 0.22);
+}
+
+.signal-bar-high.active {
+  box-shadow: 0 0 14px rgba(116, 214, 156, 0.26);
+}
+
+@keyframes signal-bar-idle-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(calc(-1 * var(--signal-idle-amplitude, 1px)));
+  }
 }
 
 .frequency-stack {

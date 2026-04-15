@@ -467,7 +467,7 @@ export class AppWeb {
         </div>
 
         <section class="codec-stage">
-          <div class="codec-machine ${this.activeCodecGlitch ? `codec-glitch-${this.activeCodecGlitch}` : ''}">
+          <div class="codec-machine ${this.activeCodecGlitch ? `codec-glitch-${this.activeCodecGlitch}` : ''} ${snapshot.mouthOpen ? 'codec-machine-speaking' : 'codec-machine-idle'}">
             <div class="codec-transmission-layers" aria-hidden="true">
               <div class="codec-noise-layer"></div>
               <div class="codec-crt-layer"></div>
