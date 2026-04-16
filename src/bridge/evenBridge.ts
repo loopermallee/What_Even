@@ -195,6 +195,11 @@ export class EvenBridgeApp {
 
   async startOnEven(options?: { forceReset?: boolean }) {
     const nativeHostDetected = hasEvenNativeHost();
+    const preStartState = this.store.getState();
+    if (!preStartState.started && preStartState.screen === 'ended') {
+      this.store.backToContacts();
+      this.store.log('Reset stale ended screen to contacts baseline before startup.');
+    }
     this.store.setEvenNativeHostDetected(nativeHostDetected);
     this.store.log(`Debug: native host detected = ${nativeHostDetected}`);
     if (!nativeHostDetected) {

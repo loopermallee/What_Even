@@ -3,7 +3,6 @@ import {
   formatGlassSpeakerLine,
   getLatestTranscriptEntryByRole,
   getWrappedWindow,
-  shouldOfferReviewText,
   wrapTextLines,
   type GlassScreenView,
 } from '../shared';
@@ -71,7 +70,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     text: capturedText || '(Recording...)',
     maxLines: 12,
   });
-  const needsReview = Boolean(capturedText) && shouldOfferReviewText(reviewContent);
 
   if (state.listeningMode === 'review' && capturedText) {
     const reviewWindow = getWrappedWindow({
@@ -101,7 +99,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       content: reviewContent,
       maxCharsPerLine: 27,
       maxLines: 3,
-      offset: 0,
+      offset: Number.MAX_SAFE_INTEGER,
     });
 
     return {
@@ -109,8 +107,8 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       statusLabel: '',
       portraitAsset: null,
       dialogue: actionWindow.text,
-      actions: needsReview ? ['TRANSMIT', 'Retry', 'Review'] : ['TRANSMIT', 'Retry'],
-      selectedActionIndex: state.listeningActionIndex,
+      actions: ['TRANSMIT', 'Retry'],
+      selectedActionIndex: Math.min(state.listeningActionIndex, 1),
       mode: 'compact',
       liveLineKind: 'none',
       showPortrait: false,

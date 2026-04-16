@@ -68,14 +68,11 @@ export class AppGlasses {
 
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
     this.store.setLastInput(input, inspection);
+    this.applyListSelectionFromInspection(inspection);
     const state = this.store.getState();
 
     if (input === 'AT_TOP' || input === 'AT_BOTTOM') {
       return { changed: false, requestClose: false };
-    }
-
-    if (inspection.source === 'listEvent' && inspection.currentSelectItemIndex !== null) {
-      this.applyListSelectionFromIndex(inspection.currentSelectItemIndex);
     }
 
     if (state.screen === 'debug') {
@@ -165,8 +162,6 @@ export class AppGlasses {
           this.store.transmitCurrentUserTurn();
         } else if (state.listeningActionIndex === 1) {
           this.store.retryListeningTurn();
-        } else {
-          this.store.enterListeningReviewMode();
         }
 
         return { changed: true, requestClose: false };
@@ -204,6 +199,35 @@ export class AppGlasses {
     }
 
     return { changed: false, requestClose: false };
+  }
+
+  private applyListSelectionFromInspection(inspection: RawEventDebugInfo) {
+    if (inspection.source !== 'listEvent') {
+      return;
+    }
+
+    const resolvedIndex = this.resolveListSelectionIndex(inspection);
+    if (resolvedIndex === null) {
+      return;
+    }
+
+    this.applyListSelectionFromIndex(resolvedIndex);
+  }
+
+  private resolveListSelectionIndex(inspection: RawEventDebugInfo) {
+    if (inspection.currentSelectItemIndex !== null) {
+      return inspection.currentSelectItemIndex;
+    }
+
+    if (inspection.currentSelectItemName !== null) {
+      const actionItems = this.getActionItems();
+      const matchingIndex = actionItems.findIndex((item) => item === inspection.currentSelectItemName);
+      if (matchingIndex >= 0) {
+        return matchingIndex;
+      }
+    }
+
+    return null;
   }
 
   buildMinimalStartContainer(): BridgePagePayload {
