@@ -469,7 +469,7 @@ export class AppStore {
   }
 
   setListeningActionIndex(index: number) {
-    this.patch({ listeningActionIndex: clampActionIndex(index, 3) });
+    this.patch({ listeningActionIndex: clampActionIndex(index, 2) });
   }
 
   setListeningMode(mode: ListeningMode) {
@@ -480,7 +480,7 @@ export class AppStore {
     this.patch({
       listeningMode: mode,
       listeningReviewOffset: mode === 'review' ? this.state.listeningReviewOffset : 0,
-      listeningActionIndex: mode === 'actions' ? this.state.listeningActionIndex : 0,
+      listeningActionIndex: mode === 'actions' ? clampActionIndex(this.state.listeningActionIndex, 2) : 0,
     });
   }
 

@@ -71,30 +71,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     maxLines: 12,
   });
 
-  if (state.listeningMode === 'review' && capturedText) {
-    const reviewWindow = getWrappedWindow({
-      content: reviewContent,
-      maxCharsPerLine: 27,
-      maxLines: 4,
-      offset: state.listeningReviewOffset,
-    });
-
-    return {
-      screenLabel: '',
-      statusLabel: '',
-      portraitAsset: null,
-      dialogue: reviewWindow.text,
-      actions: [],
-      selectedActionIndex: 0,
-      mode: 'read',
-      liveLineKind: 'none',
-      showPortrait: false,
-      showActions: false,
-      dialogueCapturesInput: true,
-    };
-  }
-
-  if (state.listeningMode === 'actions' && capturedText) {
+  if ((state.listeningMode === 'actions' || state.listeningMode === 'review') && capturedText) {
     const actionWindow = getWrappedWindow({
       content: reviewContent,
       maxCharsPerLine: 27,

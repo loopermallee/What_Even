@@ -68,7 +68,7 @@ export class AppGlasses {
 
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
     this.store.setLastInput(input, inspection);
-    this.applyListSelectionFromInspection(inspection);
+    const resolvedSelectionIndex = this.applyListSelectionFromInspection(inspection);
     const state = this.store.getState();
 
     if (input === 'AT_TOP' || input === 'AT_BOTTOM') {
@@ -113,25 +113,6 @@ export class AppGlasses {
     }
 
     if (state.screen === 'listening') {
-      if (state.listeningMode === 'review') {
-        if (input === 'UP') {
-          this.store.moveListeningReviewOffset(-1);
-          return { changed: true, requestClose: false };
-        }
-
-        if (input === 'DOWN') {
-          this.store.moveListeningReviewOffset(1);
-          return { changed: true, requestClose: false };
-        }
-
-        if (input === 'TAP' || input === 'DOUBLE_TAP') {
-          this.store.exitListeningReviewMode();
-          return { changed: true, requestClose: false };
-        }
-
-        return { changed: false, requestClose: false };
-      }
-
       if (state.listeningMode === 'capture') {
         if (input === 'DOUBLE_TAP') {
           this.store.endListening();
@@ -158,13 +139,24 @@ export class AppGlasses {
       }
 
       if (input === 'TAP') {
-        if (state.listeningActionIndex === 0) {
+        const selectedActionIndex =
+          resolvedSelectionIndex !== null
+          && resolvedSelectionIndex >= 0
+          && resolvedSelectionIndex < actionCount
+            ? resolvedSelectionIndex
+            : state.listeningActionIndex;
+
+        if (selectedActionIndex === 0) {
           this.store.transmitCurrentUserTurn();
-        } else if (state.listeningActionIndex === 1) {
-          this.store.retryListeningTurn();
+          return { changed: true, requestClose: false };
         }
 
-        return { changed: true, requestClose: false };
+        if (selectedActionIndex === 1) {
+          this.store.retryListeningTurn();
+          return { changed: true, requestClose: false };
+        }
+
+        return { changed: false, requestClose: false };
       }
 
       return { changed: false, requestClose: false };
@@ -203,15 +195,16 @@ export class AppGlasses {
 
   private applyListSelectionFromInspection(inspection: RawEventDebugInfo) {
     if (inspection.source !== 'listEvent') {
-      return;
+      return null;
     }
 
     const resolvedIndex = this.resolveListSelectionIndex(inspection);
     if (resolvedIndex === null) {
-      return;
+      return null;
     }
 
     this.applyListSelectionFromIndex(resolvedIndex);
+    return resolvedIndex;
   }
 
   private resolveListSelectionIndex(inspection: RawEventDebugInfo) {
@@ -220,8 +213,8 @@ export class AppGlasses {
     }
 
     if (inspection.currentSelectItemName !== null) {
-      const actionItems = this.getActionItems();
-      const matchingIndex = actionItems.findIndex((item) => item === inspection.currentSelectItemName);
+      const visibleItems = this.getActionItems();
+      const matchingIndex = visibleItems.findIndex((item) => item === inspection.currentSelectItemName);
       if (matchingIndex >= 0) {
         return matchingIndex;
       }

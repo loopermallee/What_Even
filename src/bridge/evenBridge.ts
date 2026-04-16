@@ -906,6 +906,7 @@ export class EvenBridgeApp {
       this.store.log(`Close request failed: ${String(error)}`);
     });
     this.store.setStarted(false);
+    this.store.backToContacts();
     this.store.noteCleanup('close-request');
   }
 
