@@ -5,8 +5,8 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
 
   return {
-    screenLabel: `Calling ${contact.name}...`,
-    statusLabel: 'Securing channel.',
+    screenLabel: `Transmitting ${contact.name}...`,
+    statusLabel: 'Securing transmission.',
     portraitAsset: null,
     dialogue: '',
     actions: [],

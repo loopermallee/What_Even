@@ -4,10 +4,10 @@ import { wrapText, type GlassScreenView } from '../shared';
 
 export function buildContactsScreen(state: AppState): GlassScreenView {
   return {
-    screenLabel: '',
+    screenLabel: 'Codec Directory',
     statusLabel: '',
     portraitAsset: null,
-    dialogue: wrapText('Tap to Call', 27, 1),
+    dialogue: wrapText('Tap: Transmit', 27, 1),
     actions: CONTACTS.map((item) => item.name),
     selectedActionIndex: state.selectedContactIndex,
     mode: 'compact',

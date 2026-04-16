@@ -151,9 +151,9 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
   let expressionRole: TranscriptEntry['role'] | null = 'system';
 
   if (state.screen === 'incoming') {
-    stateLabel = 'CALLING';
+    stateLabel = 'TRANSMIT';
     speakerLabel = contact.name.toUpperCase();
-    currentLine = 'Secure channel handshake. Link stabilizing.';
+    currentLine = 'Secure transmission handshake. Link stabilizing.';
     previousLine = `FREQUENCY ${contact.frequency}`;
     activeSpeakerSide = 'left';
     expressionSourceText = currentLine;

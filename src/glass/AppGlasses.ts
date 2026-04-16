@@ -322,6 +322,19 @@ export class AppGlasses {
 
   private buildDialogueContainer() {
     const view = this.getView();
+    if (this.store.getState().screen === 'contacts') {
+      return {
+        xPosition: 88,
+        yPosition: 28,
+        width: 206,
+        height: 44,
+        containerID: GLASSES_CONTAINERS.dialogueText.id,
+        containerName: GLASSES_CONTAINERS.dialogueText.name,
+        content: this.getDialogueText(),
+        isEventCapture: 0,
+      };
+    }
+
     const wide = !view.showPortrait;
     const tall = !view.showActions;
 
@@ -340,6 +353,23 @@ export class AppGlasses {
   private buildStatusListContainer() {
     const view = this.getView();
     const actions = this.getActionItems();
+    if (this.store.getState().screen === 'contacts') {
+      return {
+        xPosition: 88,
+        yPosition: 82,
+        width: 206,
+        height: 124,
+        containerID: GLASSES_CONTAINERS.statusList.id,
+        containerName: GLASSES_CONTAINERS.statusList.name,
+        itemContainer: {
+          itemCount: actions.length,
+          itemName: actions,
+          itemWidth: 0,
+          isItemSelectBorderEn: 1,
+        },
+        isEventCapture: 1,
+      };
+    }
 
     return {
       xPosition: view.showPortrait ? 132 : 24,

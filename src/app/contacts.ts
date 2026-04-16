@@ -56,4 +56,19 @@ export const CONTACTS: Contact[] = [
       { speaker: 'right', text: 'Fine. Just stay on comms.' },
     ],
   },
+  {
+    name: 'Mei Ling',
+    code: 'NAV',
+    frequency: '140.96',
+    portraitTag: 'ML',
+    greeting: 'Mei Ling here. Ready when you are.',
+    ackStyle: 'Understood. I am logging that now.',
+    signoff: 'Stay focused. I will keep this channel ready.',
+    dialogue: [
+      { speaker: 'left', text: 'Snake, your route window is still open. Keep moving while the patrol timing holds.', emotion: 'thinking' },
+      { speaker: 'right', text: 'Copy that. Keep tracking the route for me.' },
+      { speaker: 'left', text: 'I will update you if the pattern changes. Trust your timing and stay calm.' },
+      { speaker: 'right', text: 'Understood. I am moving now.' },
+    ],
+  },
 ];
