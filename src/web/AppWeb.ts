@@ -182,7 +182,7 @@ function getUserActionConfig(state: AppState): UserActionConfig | null {
       return {
         primary: { id: 'continueBtn', label: 'Transmit' },
         secondary: { id: 'retryBtn', label: 'Retry' },
-        tertiary: shouldOfferReview ? { id: 'reviewBtn', label: 'Review Text' } : undefined,
+        tertiary: shouldOfferReview ? { id: 'reviewBtn', label: 'Review' } : undefined,
       };
     }
 
@@ -205,7 +205,6 @@ function getUserActionConfig(state: AppState): UserActionConfig | null {
   if (state.screen === 'ended') {
     return {
       primary: { id: 'backBtn', label: 'Return' },
-      secondary: { id: 'redialBtn', label: 'Redial' },
     };
   }
 
@@ -1560,16 +1559,6 @@ export class AppWeb {
 
         if (currentState.screen === 'active') {
           this.store.endCall();
-        }
-      };
-    }
-
-    const redialBtn = document.querySelector<HTMLButtonElement>('#redialBtn');
-    if (redialBtn) {
-      redialBtn.onclick = () => {
-        if (this.store.getState().screen === 'ended') {
-          this.store.setEndedActionIndex(1);
-          this.store.redialCurrentContact();
         }
       };
     }

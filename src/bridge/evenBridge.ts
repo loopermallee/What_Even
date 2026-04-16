@@ -1190,7 +1190,7 @@ export class EvenBridgeApp {
       sttDraftVisible: draftGraceActive,
       sttDraftBucket: draftGraceActive ? state.sttDraftDisplayText.slice(0, 64) : null,
       sttError: state.sttError,
-      audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 500),
+      audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 100),
       activityBucket: Math.floor(state.listeningActivityLevel * 10),
       frameAtBucket: state.lastAudioFrameAt ? Math.floor(state.lastAudioFrameAt / 1000) : null,
       lastNormalizedInput: state.lastNormalizedInput,

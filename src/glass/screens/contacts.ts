@@ -1,15 +1,13 @@
 import { CONTACTS } from '../../app/contacts';
 import type { AppState } from '../../app/types';
-import { getSelectedContact, wrapText, type GlassScreenView } from '../shared';
+import { wrapText, type GlassScreenView } from '../shared';
 
 export function buildContactsScreen(state: AppState): GlassScreenView {
-  const contact = getSelectedContact(state);
-
   return {
-    screenLabel: 'MEMORY',
-    statusLabel: contact.frequency,
+    screenLabel: '',
+    statusLabel: '',
     portraitAsset: null,
-    dialogue: wrapText('Scroll memory.\nTap to call.', 27, 2),
+    dialogue: wrapText('Tap to Call', 27, 1),
     actions: CONTACTS.map((item) => item.name),
     selectedActionIndex: state.selectedContactIndex,
     mode: 'compact',

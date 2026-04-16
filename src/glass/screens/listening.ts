@@ -2,12 +2,33 @@ import type { AppState, TranscriptEntry } from '../../app/types';
 import {
   formatGlassSpeakerLine,
   getLatestTranscriptEntryByRole,
-  getRollingWrappedText,
   getWrappedWindow,
   shouldOfferReviewText,
-  wrapText,
+  wrapTextLines,
   type GlassScreenView,
 } from '../shared';
+
+const MAX_CAPTURE_DURATION_MS = 10_000;
+
+function formatCaptureCountdown(bufferedAudioDurationMs: number) {
+  const remainingMs = Math.max(0, MAX_CAPTURE_DURATION_MS - bufferedAudioDurationMs);
+  return `${(remainingMs / 1000).toFixed(1)}s left`;
+}
+
+function buildCaptureDialogue(state: AppState, visibleDraft: string) {
+  const countdownLine = formatCaptureCountdown(state.bufferedAudioDurationMs);
+  const transcriptLines = visibleDraft
+    ? wrapTextLines(visibleDraft, 27)
+    : [];
+  const availableTranscriptLines = Math.max(0, 5 - 2);
+  const visibleTranscriptLines = transcriptLines.slice(Math.max(0, transcriptLines.length - availableTranscriptLines));
+
+  return [
+    'You: (Recording...)',
+    ...visibleTranscriptLines,
+    countdownLine,
+  ].join('\n');
+}
 
 function getVisibleDraft(state: AppState) {
   const partial = state.sttPartialTranscript.trim();
@@ -42,12 +63,12 @@ function getPendingUserEntry(state: AppState): TranscriptEntry | null {
 }
 
 export function buildListeningScreen(state: AppState): GlassScreenView {
-  const { partial, visibleDraft } = getVisibleDraft(state);
+  const { visibleDraft } = getVisibleDraft(state);
   const pendingUserEntry = getPendingUserEntry(state);
   const capturedText = pendingUserEntry?.text ?? visibleDraft;
   const reviewContent = formatGlassSpeakerLine({
-    label: 'YOU',
-    text: capturedText || 'Speak when ready.',
+    label: 'You',
+    text: capturedText || '(Recording...)',
     maxLines: 12,
   });
   const needsReview = Boolean(capturedText) && shouldOfferReviewText(reviewContent);
@@ -61,8 +82,8 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     });
 
     return {
-      screenLabel: 'YOU',
-      statusLabel: 'REVIEW TEXT',
+      screenLabel: '',
+      statusLabel: '',
       portraitAsset: null,
       dialogue: reviewWindow.text,
       actions: [],
@@ -84,11 +105,11 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     });
 
     return {
-      screenLabel: 'YOU',
-      statusLabel: 'READY',
+      screenLabel: '',
+      statusLabel: '',
       portraitAsset: null,
       dialogue: actionWindow.text,
-      actions: needsReview ? ['TRANSMIT', 'RETRY', 'REVIEW TEXT'] : ['TRANSMIT', 'RETRY'],
+      actions: needsReview ? ['TRANSMIT', 'Retry', 'Review'] : ['TRANSMIT', 'Retry'],
       selectedActionIndex: state.listeningActionIndex,
       mode: 'compact',
       liveLineKind: 'none',
@@ -97,28 +118,15 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     };
   }
 
-  const captureText = visibleDraft
-    ? getRollingWrappedText(
-      formatGlassSpeakerLine({
-        label: 'YOU',
-        text: visibleDraft,
-        maxLines: 6,
-        cursorVisible: partial.length > 0,
-      }),
-      27,
-      3
-    )
-    : wrapText('Speak when ready.', 27, 2);
-
   return {
-    screenLabel: 'YOU',
-    statusLabel: 'SPEAK',
+    screenLabel: '',
+    statusLabel: '',
     portraitAsset: null,
-    dialogue: captureText,
+    dialogue: buildCaptureDialogue(state, visibleDraft),
     actions: [],
     selectedActionIndex: 0,
     mode: 'compact',
-    liveLineKind: partial ? 'user' : 'none',
+    liveLineKind: 'none',
     showPortrait: false,
     showActions: false,
     dialogueCapturesInput: true,

@@ -195,23 +195,8 @@ export class AppGlasses {
     }
 
     if (state.screen === 'ended') {
-      if (input === 'UP') {
-        this.store.setEndedActionIndex(0);
-        return { changed: true, requestClose: false };
-      }
-
-      if (input === 'DOWN') {
-        this.store.setEndedActionIndex(1);
-        return { changed: true, requestClose: false };
-      }
-
       if (input === 'TAP') {
-        if (this.store.getState().endedActionIndex === 0) {
-          this.store.backToContacts();
-        } else {
-          this.store.redialCurrentContact();
-        }
-
+        this.store.backToContacts();
         return { changed: true, requestClose: false };
       }
 

@@ -2,7 +2,6 @@ import type { AppState } from '../../app/types';
 import {
   formatGlassSpeakerLine,
   getActiveTranscriptEntry,
-  getPortraitAssetForState,
   getSelectedContact,
   shouldUseReadMode,
   wrapText,
@@ -12,7 +11,9 @@ import {
 export function buildActiveScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
   const focusedEntry = getActiveTranscriptEntry(state);
-  const speakerLabel = focusedEntry?.speaker.toUpperCase() ?? contact.name.toUpperCase();
+  const speakerLabel = focusedEntry?.role === 'user'
+    ? 'You'
+    : contact.name;
   const line = focusedEntry?.text ?? 'Standing by.';
   const mode = shouldUseReadMode({
     label: speakerLabel,
@@ -22,9 +23,9 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     : 'compact';
 
   return {
-    screenLabel: contact.name.toUpperCase(),
-    statusLabel: state.lastHandledUserTranscriptId === null ? 'LINK ESTABLISHED' : 'ACKNOWLEDGED',
-    portraitAsset: getPortraitAssetForState(state),
+    screenLabel: '',
+    statusLabel: '',
+    portraitAsset: null,
     dialogue: mode === 'read'
       ? formatGlassSpeakerLine({
         label: speakerLabel,
@@ -36,7 +37,7 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     selectedActionIndex: state.activeActionIndex,
     mode,
     liveLineKind: 'none',
-    showPortrait: true,
+    showPortrait: false,
     showActions: true,
   };
 }
