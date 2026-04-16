@@ -169,6 +169,7 @@ export class EvenBridgeApp {
   private readonly audioDropLogThrottleMs = 1500;
   private readonly sttPartialFlushMs = 70;
   private readonly staleLogCooldownMs = 800;
+  private readonly outboundAdvanceDelayMs = 1100;
   private readonly simulatorUnknownTapSuppressMs = 150;
   private readonly deviceInfoRetryDelayMs = 250;
   private readonly deviceInfoRetryAttempts = 4;
@@ -177,6 +178,7 @@ export class EvenBridgeApp {
   private suppressSimulatorUnknownTapUntil = 0;
   private bridgeReadyAt: number | null = null;
   private portraitCooldownTimer: number | null = null;
+  private outboundAdvanceTimer: number | null = null;
   private sawLaunchSourceCallback = false;
   private latestLaunchSource: string | null = null;
   private firstLaunchSourceCallbackAt: number | null = null;
@@ -646,6 +648,7 @@ export class EvenBridgeApp {
       window.clearTimeout(this.portraitCooldownTimer);
       this.portraitCooldownTimer = null;
     }
+    this.clearOutboundAdvanceTimer();
     this.syncInFlight = false;
     this.syncQueuedWhileInFlight = false;
     this.syncNeedsForcedImages = false;
@@ -762,11 +765,14 @@ export class EvenBridgeApp {
     }
 
     this.normalizer.clear();
-    this.normalizer.seedListIndex(
-      GLASSES_CONTAINERS.statusList.id,
-      GLASSES_CONTAINERS.statusList.name,
-      this.glasses.getActionSeedIndex()
-    );
+    const seedIndex = this.glasses.getActionSeedIndex();
+    if (seedIndex !== null) {
+      this.normalizer.seedListIndex(
+        GLASSES_CONTAINERS.statusList.id,
+        GLASSES_CONTAINERS.statusList.name,
+        seedIndex
+      );
+    }
 
     this.feedbackManager = new InteractionFeedbackManager({
       onActionCommitted: (interaction) => {
@@ -813,6 +819,7 @@ export class EvenBridgeApp {
     this.lastAudioLifecycleSignature = this.getAudioLifecycleSignature(this.store.getState());
     this.unsubscribeStore = this.store.subscribe((nextState) => {
       this.captureCleanupReasonHint(nextState);
+      this.syncOutboundAdvanceForState(nextState);
       const nextSignature = this.getAudioLifecycleSignature(nextState);
       if (nextSignature === this.lastAudioLifecycleSignature) {
         return;
@@ -823,6 +830,7 @@ export class EvenBridgeApp {
     });
 
     void this.syncMicForCurrentState();
+    this.syncOutboundAdvanceForState(this.store.getState());
   }
 
   private async syncMicForCurrentState() {
@@ -831,7 +839,7 @@ export class EvenBridgeApp {
     }
 
     const state = this.store.getState();
-    const shouldBeOpen = state.started && state.screen === 'listening';
+    const shouldBeOpen = state.started && state.screen === 'listening' && state.listeningMode === 'capture';
     if (shouldBeOpen) {
       if (!this.audioCapture.isMicOpen() && state.audioCaptureStatus !== 'opening') {
         this.pendingCleanupReason = null;
@@ -839,7 +847,10 @@ export class EvenBridgeApp {
         this.store.log('Mic open requested (entered listening).');
         const opened = await this.audioCapture.requestMicOpen(this.bridge);
         const afterOpenState = this.store.getState();
-        const stillShouldBeOpen = afterOpenState.started && afterOpenState.screen === 'listening';
+        const stillShouldBeOpen =
+          afterOpenState.started &&
+          afterOpenState.screen === 'listening' &&
+          afterOpenState.listeningMode === 'capture';
         if (!stillShouldBeOpen) {
           this.store.log('Mic open completed after listening exit; closing mic for reconciliation.');
           await this.closeMicIfNeeded('post-open-reconcile');
@@ -944,7 +955,7 @@ export class EvenBridgeApp {
     }
 
     const state = this.store.getState();
-    if (state.screen !== 'listening' || !state.started) {
+    if (state.screen !== 'listening' || state.listeningMode !== 'capture' || !state.started) {
       const now = Date.now();
       if (now - this.lastAudioDropLogAt >= this.audioDropLogThrottleMs) {
         this.lastAudioDropLogAt = now;
@@ -1007,11 +1018,14 @@ export class EvenBridgeApp {
     await this.syncText();
     await this.syncImages(forceImages);
 
-    this.normalizer.seedListIndex(
-      GLASSES_CONTAINERS.statusList.id,
-      GLASSES_CONTAINERS.statusList.name,
-      this.glasses.getActionSeedIndex()
-    );
+    const seedIndex = this.glasses.getActionSeedIndex();
+    if (seedIndex !== null) {
+      this.normalizer.seedListIndex(
+        GLASSES_CONTAINERS.statusList.id,
+        GLASSES_CONTAINERS.statusList.name,
+        seedIndex
+      );
+    }
     this.suppressSimulatorUnknownTapUntil = Date.now() + this.simulatorUnknownTapSuppressMs;
   }
 
@@ -1054,6 +1068,12 @@ export class EvenBridgeApp {
     }
 
     const portraitAsset = this.glasses.getPortraitAssetKey();
+    if (!portraitAsset) {
+      this.lastQueuedPortraitAsset = null;
+      this.lastRenderedPortraitAsset = null;
+      return;
+    }
+
     const changed = force || this.lastRenderedPortraitAsset !== portraitAsset;
     if (!changed) {
       return;
@@ -1146,8 +1166,9 @@ export class EvenBridgeApp {
       screen: state.screen,
       screenBeforeDebug: state.screenBeforeDebug,
       selectedContactIndex: state.selectedContactIndex,
-      incomingActionIndex: state.incomingActionIndex,
       listeningActionIndex: state.listeningActionIndex,
+      listeningMode: state.listeningMode,
+      listeningReviewOffset: state.listeningMode === 'review' ? state.listeningReviewOffset : null,
       activeActionIndex: state.activeActionIndex,
       endedActionIndex: state.endedActionIndex,
       dialogueIndex: state.dialogueIndex,
@@ -1209,9 +1230,39 @@ export class EvenBridgeApp {
     }, remainingMs + 10);
   }
 
+  private clearOutboundAdvanceTimer() {
+    if (this.outboundAdvanceTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.outboundAdvanceTimer);
+    this.outboundAdvanceTimer = null;
+  }
+
+  private syncOutboundAdvanceForState(state: ReturnType<AppStore['getState']>) {
+    if (!state.started || state.screen !== 'incoming') {
+      this.clearOutboundAdvanceTimer();
+      return;
+    }
+
+    if (this.outboundAdvanceTimer !== null) {
+      return;
+    }
+
+    this.outboundAdvanceTimer = window.setTimeout(() => {
+      this.outboundAdvanceTimer = null;
+      const nextState = this.store.getState();
+      if (!nextState.started || nextState.screen !== 'incoming') {
+        return;
+      }
+
+      this.store.presentOutboundGreeting();
+    }, this.outboundAdvanceDelayMs);
+  }
+
   private async ensureSttForCurrentState() {
     const state = this.store.getState();
-    if (!state.started || state.screen !== 'listening') {
+    if (!state.started || state.screen !== 'listening' || state.listeningMode !== 'capture') {
       return;
     }
 
@@ -1247,7 +1298,12 @@ export class EvenBridgeApp {
     this.clearSttRetryTimer('start-session');
 
     const state = this.store.getState();
-    if (!state.started || state.screen !== 'listening' || state.listeningSessionId !== listeningSessionId) {
+    if (
+      !state.started ||
+      state.screen !== 'listening' ||
+      state.listeningMode !== 'capture' ||
+      state.listeningSessionId !== listeningSessionId
+    ) {
       return;
     }
 
@@ -1306,6 +1362,7 @@ export class EvenBridgeApp {
     if (
       !latestState.started ||
       latestState.screen !== 'listening' ||
+      latestState.listeningMode !== 'capture' ||
       latestState.listeningSessionId !== listeningSessionId ||
       !latestState.micOpen ||
       latestState.audioCaptureStatus !== 'listening' ||
@@ -1543,6 +1600,7 @@ export class EvenBridgeApp {
     return (
       state.started &&
       state.screen === 'listening' &&
+      state.listeningMode === 'capture' &&
       state.listeningSessionId === listeningSessionId
     );
   }
@@ -1762,8 +1820,8 @@ export class EvenBridgeApp {
       return;
     }
 
-    if (previous.screen === 'incoming' && nextState.screen === 'ended') {
-      this.pendingCleanupReason = 'ignore';
+    if (previous.screen === 'incoming' && nextState.screen === 'contacts') {
+      this.pendingCleanupReason = 'back';
       return;
     }
 
@@ -1894,6 +1952,7 @@ export class EvenBridgeApp {
     return JSON.stringify({
       started: state.started,
       screen: state.screen,
+      listeningMode: state.listeningMode,
       selectedContactIndex: state.selectedContactIndex,
       listeningSessionId: state.listeningSessionId,
       micOpen: state.micOpen,

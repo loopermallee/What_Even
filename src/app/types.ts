@@ -53,10 +53,14 @@ export type Contact = {
   frequency: string;
   portraitTag: string;
   characterId?: CodecCharacterId;
+  greeting: string;
+  ackStyle: string;
+  signoff: string;
   dialogue: DialogueLine[];
 };
 
 export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
+export type ListeningMode = 'capture' | 'actions' | 'review';
 
 export type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
 export type EvenStartupStatus = 'idle' | 'starting' | 'ready' | 'blocked';
@@ -146,8 +150,9 @@ export type AppState = {
   simulatorSessionDetected: boolean;
   evenNativeHostDetected: boolean;
   selectedContactIndex: number;
-  incomingActionIndex: number;
   listeningActionIndex: number;
+  listeningMode: ListeningMode;
+  listeningReviewOffset: number;
   activeActionIndex: number;
   endedActionIndex: number;
   dialogueIndex: number;

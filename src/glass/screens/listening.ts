@@ -1,15 +1,15 @@
-import type { AppState } from '../../app/types';
+import type { AppState, TranscriptEntry } from '../../app/types';
 import {
   formatGlassSpeakerLine,
   getLatestTranscriptEntryByRole,
-  getPortraitAssetForState,
-  getSelectedContact,
-  shouldUseReadMode,
+  getRollingWrappedText,
+  getWrappedWindow,
+  shouldOfferReviewText,
   wrapText,
   type GlassScreenView,
 } from '../shared';
 
-function getListeningPresentation(state: AppState) {
+function getVisibleDraft(state: AppState) {
   const partial = state.sttPartialTranscript.trim();
   const draftGraceActive = Boolean(
     !partial &&
@@ -17,71 +17,110 @@ function getListeningPresentation(state: AppState) {
     state.sttDraftVisibleUntil !== null &&
     Date.now() <= state.sttDraftVisibleUntil
   );
-  const visibleDraft = partial || (draftGraceActive ? state.sttDraftDisplayText.trim() : '');
-  if (visibleDraft) {
-    return {
-      statusLabel: 'SPEAK',
-      speakerLabel: 'YOU',
-      line: visibleDraft,
-      liveLineKind: partial ? 'user' as const : 'none' as const,
-      actions: ['SEND', 'RETRY'],
-    };
-  }
-
-  const latestContact = getLatestTranscriptEntryByRole(state, ['contact', 'system']);
-  if (latestContact) {
-    return {
-      statusLabel: 'LISTEN',
-      speakerLabel: latestContact.speaker.toUpperCase(),
-      line: latestContact.text,
-      liveLineKind: 'none' as const,
-      actions: ['REPLY', 'END'],
-    };
-  }
 
   return {
-    statusLabel: 'YOUR TURN',
-    speakerLabel: 'YOU',
-    line: 'Speak when ready.',
-    liveLineKind: 'none' as const,
-    actions: ['REPLY', 'END'],
+    partial,
+    visibleDraft: partial || (draftGraceActive ? state.sttDraftDisplayText.trim() : ''),
   };
 }
 
+function getPendingUserEntry(state: AppState): TranscriptEntry | null {
+  for (let index = state.transcript.length - 1; index >= 0; index -= 1) {
+    const entry = state.transcript[index];
+    if (entry.role !== 'user') {
+      continue;
+    }
+
+    if (state.lastHandledUserTranscriptId !== null && entry.id <= state.lastHandledUserTranscriptId) {
+      continue;
+    }
+
+    return entry;
+  }
+
+  return getLatestTranscriptEntryByRole(state, ['user']);
+}
+
 export function buildListeningScreen(state: AppState): GlassScreenView {
-  const contact = getSelectedContact(state);
-  const presentation = getListeningPresentation(state);
-  const mode = shouldUseReadMode({
-    label: presentation.speakerLabel,
-    text: presentation.line,
-  })
-    ? 'read'
-    : 'compact';
+  const { partial, visibleDraft } = getVisibleDraft(state);
+  const pendingUserEntry = getPendingUserEntry(state);
+  const capturedText = pendingUserEntry?.text ?? visibleDraft;
+  const reviewContent = formatGlassSpeakerLine({
+    label: 'YOU',
+    text: capturedText || 'Speak when ready.',
+    maxLines: 12,
+  });
+  const needsReview = Boolean(capturedText) && shouldOfferReviewText(reviewContent);
+
+  if (state.listeningMode === 'review' && capturedText) {
+    const reviewWindow = getWrappedWindow({
+      content: reviewContent,
+      maxCharsPerLine: 27,
+      maxLines: 4,
+      offset: state.listeningReviewOffset,
+    });
+
+    return {
+      screenLabel: 'YOU',
+      statusLabel: 'REVIEW TEXT',
+      portraitAsset: null,
+      dialogue: reviewWindow.text,
+      actions: [],
+      selectedActionIndex: 0,
+      mode: 'read',
+      liveLineKind: 'none',
+      showPortrait: false,
+      showActions: false,
+      dialogueCapturesInput: true,
+    };
+  }
+
+  if (state.listeningMode === 'actions' && capturedText) {
+    const actionWindow = getWrappedWindow({
+      content: reviewContent,
+      maxCharsPerLine: 27,
+      maxLines: 3,
+      offset: 0,
+    });
+
+    return {
+      screenLabel: 'YOU',
+      statusLabel: 'READY',
+      portraitAsset: null,
+      dialogue: actionWindow.text,
+      actions: needsReview ? ['TRANSMIT', 'RETRY', 'REVIEW TEXT'] : ['TRANSMIT', 'RETRY'],
+      selectedActionIndex: state.listeningActionIndex,
+      mode: 'compact',
+      liveLineKind: 'none',
+      showPortrait: false,
+      showActions: true,
+    };
+  }
+
+  const captureText = visibleDraft
+    ? getRollingWrappedText(
+      formatGlassSpeakerLine({
+        label: 'YOU',
+        text: visibleDraft,
+        maxLines: 6,
+        cursorVisible: partial.length > 0,
+      }),
+      27,
+      3
+    )
+    : wrapText('Speak when ready.', 27, 2);
 
   return {
-    screenLabel: `${contact.name.toUpperCase()} ${contact.frequency}`,
-    statusLabel: presentation.statusLabel,
-    portraitAsset: getPortraitAssetForState(state),
-    dialogue: mode === 'read'
-      ? formatGlassSpeakerLine({
-        label: presentation.speakerLabel,
-        text: presentation.line,
-        maxLines: 6,
-        cursorVisible: presentation.liveLineKind !== 'none',
-      })
-      : wrapText(
-        formatGlassSpeakerLine({
-          label: presentation.speakerLabel,
-          text: presentation.line,
-          maxLines: 3,
-          cursorVisible: presentation.liveLineKind !== 'none',
-        }),
-        27,
-        3
-      ),
-    actions: presentation.actions,
-    selectedActionIndex: state.listeningActionIndex,
-    mode,
-    liveLineKind: presentation.liveLineKind,
+    screenLabel: 'YOU',
+    statusLabel: 'SPEAK',
+    portraitAsset: null,
+    dialogue: captureText,
+    actions: [],
+    selectedActionIndex: 0,
+    mode: 'compact',
+    liveLineKind: partial ? 'user' : 'none',
+    showPortrait: false,
+    showActions: false,
+    dialogueCapturesInput: true,
   };
 }

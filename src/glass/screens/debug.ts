@@ -18,5 +18,7 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
     selectedActionIndex: 0,
     mode: 'compact',
     liveLineKind: 'none',
+    showPortrait: true,
+    showActions: true,
   };
 }

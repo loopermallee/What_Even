@@ -24,12 +24,15 @@ export const GLASSES_CONTAINERS = {
 export type GlassScreenView = {
   screenLabel: string;
   statusLabel: string;
-  portraitAsset: PortraitAsset;
+  portraitAsset?: PortraitAsset | null;
   dialogue: string;
   actions: string[];
   selectedActionIndex: number;
   mode: GlassPresentationMode;
   liveLineKind: GlassLiveLineKind;
+  showPortrait: boolean;
+  showActions: boolean;
+  dialogueCapturesInput?: boolean;
 };
 
 export type GlassPortraitState = {
@@ -80,6 +83,28 @@ export function wrapText(content: string, maxCharsPerLine: number, maxLines: num
   return wrapTextLines(content, maxCharsPerLine).slice(0, maxLines).join('\n');
 }
 
+export function getRollingWrappedText(content: string, maxCharsPerLine: number, maxLines: number) {
+  const lines = wrapTextLines(content, maxCharsPerLine);
+  return lines.slice(Math.max(0, lines.length - maxLines)).join('\n');
+}
+
+export function getWrappedWindow(options: {
+  content: string;
+  maxCharsPerLine: number;
+  maxLines: number;
+  offset: number;
+}) {
+  const lines = wrapTextLines(options.content, options.maxCharsPerLine);
+  const maxOffset = Math.max(0, lines.length - options.maxLines);
+  const offset = Math.max(0, Math.min(options.offset, maxOffset));
+  return {
+    text: lines.slice(offset, offset + options.maxLines).join('\n'),
+    lineCount: lines.length,
+    offset,
+    maxOffset,
+  };
+}
+
 export function normalizeCodecText(text: string) {
   return text.trim().replace(/\s+/g, ' ');
 }
@@ -119,6 +144,10 @@ export function formatCodecLine(label: string, text: string, maxChars = DEFAULT_
 
 export function countWrappedLines(content: string, maxChars = DEFAULT_CODEC_LINE_WIDTH) {
   return wrapTextLines(content, maxChars).length;
+}
+
+export function shouldOfferReviewText(content: string, maxChars = DEFAULT_CODEC_LINE_WIDTH, maxCompactLines = 3) {
+  return countWrappedLines(content, maxChars) > maxCompactLines;
 }
 
 export function withLiveCursor(text: string, cursorVisible: boolean) {

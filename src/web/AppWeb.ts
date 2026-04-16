@@ -15,6 +15,7 @@ import { renderSignalBars } from './components/SignalBars';
 import { renderTranscriptPanel } from './components/TranscriptPanel';
 import { CodecPortraitAnimator, type CodecPortraitAnimationFrame } from './lib/CodecPortraitAnimator';
 import { syncCodecSpritePortraits } from './lib/codecSprites';
+import { countWrappedLines } from '../glass/shared';
 
 function mustQuery<T extends Element>(selector: string) {
   const element = document.querySelector<T>(selector);
@@ -44,7 +45,8 @@ function formatFrameRect(frameRect: CodecPortraitAnimationFrame['left']['frameRe
 
 type UserActionConfig = {
   primary: { id: string; label: string };
-  secondary: { id: string; label: string };
+  secondary?: { id: string; label: string };
+  tertiary?: { id: string; label: string };
 };
 
 type CodecAnimatedDomNodes = {
@@ -157,45 +159,53 @@ function readFxQueryState(): FxQueryState {
 }
 
 function getUserActionConfig(state: AppState): UserActionConfig | null {
+  const latestPendingUser = [...state.transcript].reverse().find((entry) => (
+    entry.role === 'user' && (state.lastHandledUserTranscriptId === null || entry.id > state.lastHandledUserTranscriptId)
+  )) ?? null;
+  const shouldOfferReview = Boolean(
+    latestPendingUser?.text && countWrappedLines(`YOU: ${latestPendingUser.text}`, 27) > 3
+  );
+
   if (state.screen === 'contacts') {
     return {
-      primary: { id: 'startCallBtn', label: 'Start Call' },
+      primary: { id: 'startCallBtn', label: 'Call' },
       secondary: { id: 'chooseContactBtn', label: 'Choose Contact' },
     };
   }
 
   if (state.screen === 'incoming') {
-    return {
-      primary: { id: 'answerBtn', label: 'Answer' },
-      secondary: { id: 'ignoreBtn', label: 'Ignore' },
-    };
+    return null;
   }
 
   if (state.screen === 'listening') {
-    if (state.sttPartialTranscript.trim()) {
+    if (state.listeningMode === 'actions' && latestPendingUser) {
       return {
-        primary: { id: 'continueBtn', label: 'Send' },
+        primary: { id: 'continueBtn', label: 'Transmit' },
+        secondary: { id: 'retryBtn', label: 'Retry' },
+        tertiary: shouldOfferReview ? { id: 'reviewBtn', label: 'Review Text' } : undefined,
+      };
+    }
+
+    if (state.listeningMode === 'review') {
+      return {
+        primary: { id: 'reviewExitBtn', label: 'Return' },
         secondary: { id: 'retryBtn', label: 'Retry' },
       };
     }
 
-    return {
-      primary: { id: 'continueBtn', label: 'Reply' },
-      secondary: { id: 'endBtn', label: 'End' },
-    };
+    return null;
   }
 
   if (state.screen === 'active') {
     return {
       primary: { id: 'nextBtn', label: 'Next' },
-      secondary: { id: 'endBtn', label: 'End' },
     };
   }
 
   if (state.screen === 'ended') {
     return {
-      primary: { id: 'redialBtn', label: 'Redial' },
-      secondary: { id: 'backBtn', label: 'Back' },
+      primary: { id: 'backBtn', label: 'Return' },
+      secondary: { id: 'redialBtn', label: 'Redial' },
     };
   }
 
@@ -290,6 +300,7 @@ export class AppWeb {
   private lastRenderedState: AppState | null = null;
   private lastRenderedScene: CodecPortraitScene | null = null;
   private lastEffectiveGlitch: CodecGlitchKind | null = null;
+  private webOutgoingAdvanceTimer: number | null = null;
   private animatedNodes: CodecAnimatedDomNodes = {
     leftFrame: null,
     rightFrame: null,
@@ -330,6 +341,7 @@ export class AppWeb {
       if (state.screen !== 'contacts') {
         this.contactPickerOpen = false;
       }
+      this.syncWebOutgoingAdvance(state);
       this.render(state);
     });
 
@@ -354,6 +366,10 @@ export class AppWeb {
 
     this.clearSpeechWindowTimer();
     this.clearScriptedAutoplayTimer();
+    if (this.webOutgoingAdvanceTimer !== null) {
+      window.clearTimeout(this.webOutgoingAdvanceTimer);
+      this.webOutgoingAdvanceTimer = null;
+    }
     this.portraitAnimator.destroy();
     this.animatedNodes = {
       leftFrame: null,
@@ -407,6 +423,28 @@ export class AppWeb {
     this.bindControls(state);
     this.bindLifecycleHarnessControls();
     this.previousState = state;
+  }
+
+  private syncWebOutgoingAdvance(state: AppState) {
+    if (state.started || state.screen !== 'incoming') {
+      if (this.webOutgoingAdvanceTimer !== null) {
+        window.clearTimeout(this.webOutgoingAdvanceTimer);
+        this.webOutgoingAdvanceTimer = null;
+      }
+      return;
+    }
+
+    if (this.webOutgoingAdvanceTimer !== null) {
+      return;
+    }
+
+    this.webOutgoingAdvanceTimer = window.setTimeout(() => {
+      this.webOutgoingAdvanceTimer = null;
+      const currentState = this.store.getState();
+      if (!currentState.started && currentState.screen === 'incoming') {
+        this.store.presentOutboundGreeting();
+      }
+    }, 1100);
   }
 
   private getCodecGlitchEvent(
@@ -709,13 +747,17 @@ export class AppWeb {
     const latestError = getLatestRuntimeError(state);
     const isSpeaking = animationFrame.talkingMode !== 'silent';
     const surfaceMode = state.screen === 'contacts'
-      ? 'Directory standby'
+      ? 'Memory selector'
       : state.screen === 'incoming'
-        ? 'Incoming link'
+        ? 'Outbound handshake'
         : state.screen === 'listening'
-          ? 'Live listening'
+          ? state.listeningMode === 'review'
+            ? 'Review text'
+            : state.listeningMode === 'actions'
+              ? 'Transmit review'
+              : 'Live capture'
           : state.screen === 'active'
-            ? 'Codec channel open'
+            ? 'Caller response'
             : 'Link closed';
     const leftPortrait = renderCodecPortrait({
       label: contact.name.toUpperCase(),
@@ -858,7 +900,8 @@ export class AppWeb {
             ${actions ? `
               <div class="codec-action-row">
                 <button id="${actions.primary.id}" class="primary-action codec-action-button">${actions.primary.label}</button>
-                <button id="${actions.secondary.id}" class="secondary-action codec-action-button">${actions.secondary.label}</button>
+                ${actions.secondary ? `<button id="${actions.secondary.id}" class="secondary-action codec-action-button">${actions.secondary.label}</button>` : ''}
+                ${actions.tertiary ? `<button id="${actions.tertiary.id}" class="secondary-action codec-action-button">${actions.tertiary.label}</button>` : ''}
               </div>
             ` : ''}
           </div>
@@ -1405,32 +1448,12 @@ export class AppWeb {
       };
     }
 
-    const answerBtn = document.querySelector<HTMLButtonElement>('#answerBtn');
-    if (answerBtn) {
-      answerBtn.onclick = () => {
-        if (this.store.getState().screen === 'incoming') {
-          this.store.setIncomingActionIndex(0);
-          this.store.answerIncomingAndStartListening();
-        }
-      };
-    }
-
-    const ignoreBtn = document.querySelector<HTMLButtonElement>('#ignoreBtn');
-    if (ignoreBtn) {
-      ignoreBtn.onclick = () => {
-        if (this.store.getState().screen === 'incoming') {
-          this.store.setIncomingActionIndex(1);
-          this.store.ignoreIncoming();
-        }
-      };
-    }
-
     const continueBtn = document.querySelector<HTMLButtonElement>('#continueBtn');
     if (continueBtn) {
       continueBtn.onclick = () => {
         if (this.store.getState().screen === 'listening') {
           this.store.setListeningActionIndex(0);
-          this.store.continueListeningAndStartActiveCall();
+          this.store.transmitCurrentUserTurn();
         }
       };
     }
@@ -1439,9 +1462,28 @@ export class AppWeb {
     if (retryBtn) {
       retryBtn.onclick = () => {
         const currentState = this.store.getState();
-        if (currentState.screen === 'listening' && currentState.sttPartialTranscript.trim()) {
+        if (currentState.screen === 'listening') {
           this.store.setListeningActionIndex(1);
-          this.store.clearSttPartialTranscript();
+          this.store.retryListeningTurn();
+        }
+      };
+    }
+
+    const reviewBtn = document.querySelector<HTMLButtonElement>('#reviewBtn');
+    if (reviewBtn) {
+      reviewBtn.onclick = () => {
+        if (this.store.getState().screen === 'listening') {
+          this.store.setListeningActionIndex(2);
+          this.store.enterListeningReviewMode();
+        }
+      };
+    }
+
+    const reviewExitBtn = document.querySelector<HTMLButtonElement>('#reviewExitBtn');
+    if (reviewExitBtn) {
+      reviewExitBtn.onclick = () => {
+        if (this.store.getState().screen === 'listening') {
+          this.store.exitListeningReviewMode();
         }
       };
     }
@@ -1512,13 +1554,11 @@ export class AppWeb {
       endBtn.onclick = () => {
         const currentState = this.store.getState();
         if (currentState.screen === 'listening') {
-          this.store.setListeningActionIndex(1);
           this.store.endListening();
           return;
         }
 
         if (currentState.screen === 'active') {
-          this.store.setActiveActionIndex(1);
           this.store.endCall();
         }
       };
@@ -1528,7 +1568,7 @@ export class AppWeb {
     if (redialBtn) {
       redialBtn.onclick = () => {
         if (this.store.getState().screen === 'ended') {
-          this.store.setEndedActionIndex(0);
+          this.store.setEndedActionIndex(1);
           this.store.redialCurrentContact();
         }
       };
@@ -1538,7 +1578,7 @@ export class AppWeb {
     if (backBtn) {
       backBtn.onclick = () => {
         if (this.store.getState().screen === 'ended') {
-          this.store.setEndedActionIndex(1);
+          this.store.setEndedActionIndex(0);
           this.store.backToContacts();
         }
       };

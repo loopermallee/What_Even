@@ -6,17 +6,33 @@ function hasAny(text: string, needles: string[]) {
   return needles.some((needle) => text.includes(needle));
 }
 
+export function generateGreeting(contact: Contact): GeneratedTurn {
+  return {
+    role: 'contact',
+    speaker: contact.name.toUpperCase(),
+    text: contact.greeting,
+    emotion: 'stern',
+  };
+}
+
 export function generateDeterministicResponse(contact: Contact, userText: string): GeneratedTurn[] {
   const normalized = userText.trim().toLowerCase();
   const contactSpeaker = contact.name.toUpperCase();
+  const lead = contact.ackStyle;
+  const signoff = contact.signoff;
 
   if (hasAny(normalized, ['repeat', 'again', 'say that'])) {
     return [
       {
         role: 'contact',
         speaker: contactSpeaker,
-        text: 'Copy. Repeating the last guidance: stay low, move steadily, and keep comms open.',
+        text: `${lead} Repeating the last guidance: stay low, move steadily, and keep comms open.`,
         emotion: 'stern',
+      },
+      {
+        role: 'system',
+        speaker: 'SYSTEM',
+        text: signoff,
       },
     ];
   }
@@ -26,13 +42,13 @@ export function generateDeterministicResponse(contact: Contact, userText: string
       {
         role: 'contact',
         speaker: contactSpeaker,
-        text: 'Status remains stable. No immediate threats on this channel.',
+        text: `${lead} Status remains stable. No immediate threats on this channel.`,
         emotion: 'stern',
       },
       {
         role: 'system',
         speaker: 'SYSTEM',
-        text: 'Codec link stable. Monitoring continues.',
+        text: signoff,
       },
     ];
   }
@@ -42,8 +58,13 @@ export function generateDeterministicResponse(contact: Contact, userText: string
       {
         role: 'contact',
         speaker: contactSpeaker,
-        text: 'Current position is unchanged. Keep your route flexible and avoid open corridors.',
+        text: `${lead} Current position is unchanged. Keep your route flexible and avoid open corridors.`,
         emotion: 'thinking',
+      },
+      {
+        role: 'system',
+        speaker: 'SYSTEM',
+        text: signoff,
       },
     ];
   }
@@ -53,8 +74,13 @@ export function generateDeterministicResponse(contact: Contact, userText: string
       {
         role: 'contact',
         speaker: contactSpeaker,
-        text: 'Understood. Holding the line and watching for movement.',
+        text: `${lead} Holding the line and watching for movement.`,
         emotion: 'thinking',
+      },
+      {
+        role: 'system',
+        speaker: 'SYSTEM',
+        text: signoff,
       },
     ];
   }
@@ -64,8 +90,13 @@ export function generateDeterministicResponse(contact: Contact, userText: string
       {
         role: 'contact',
         speaker: contactSpeaker,
-        text: 'I can support with updates and route checks. Tell me what you need next.',
+        text: `${lead} I can support with updates and route checks.`,
         emotion: 'stern',
+      },
+      {
+        role: 'system',
+        speaker: 'SYSTEM',
+        text: signoff,
       },
     ];
   }
@@ -74,8 +105,13 @@ export function generateDeterministicResponse(contact: Contact, userText: string
     {
       role: 'contact',
       speaker: contactSpeaker,
-      text: `Copy that. ${contact.name} acknowledges and will keep feeding updates on this codec channel.`,
+      text: `${lead} ${contact.name} is moving on it now.`,
       emotion: 'stern',
+    },
+    {
+      role: 'system',
+      speaker: 'SYSTEM',
+      text: signoff,
     },
   ];
 }

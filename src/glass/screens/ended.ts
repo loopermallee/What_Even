@@ -1,17 +1,19 @@
 import type { AppState } from '../../app/types';
-import { getPortraitAssetForState, getSelectedContact, wrapText, type GlassScreenView } from '../shared';
+import { getSelectedContact, wrapText, type GlassScreenView } from '../shared';
 
 export function buildEndedScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
 
   return {
-    screenLabel: `${contact.name.toUpperCase()} ${contact.frequency}`,
-    statusLabel: 'CALL ENDED',
-    portraitAsset: getPortraitAssetForState(state),
-    dialogue: wrapText('Link closed. Select your next action.', 27, 2),
-    actions: ['REDIAL', 'BACK'],
+    screenLabel: contact.name.toUpperCase(),
+    statusLabel: 'LINK CLOSED',
+    portraitAsset: null,
+    dialogue: wrapText('Transmission complete.\nChoose your next move.', 27, 3),
+    actions: ['RETURN', 'REDIAL'],
     selectedActionIndex: state.endedActionIndex,
     mode: 'compact',
     liveLineKind: 'none',
+    showPortrait: false,
+    showActions: true,
   };
 }

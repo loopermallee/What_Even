@@ -151,15 +151,31 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
   let expressionRole: TranscriptEntry['role'] | null = 'system';
 
   if (state.screen === 'incoming') {
-    stateLabel = 'INCOMING CALL';
+    stateLabel = 'CALLING';
     speakerLabel = contact.name.toUpperCase();
-    currentLine = 'Secure incoming link request. Answer when ready.';
+    currentLine = 'Secure channel handshake. Link stabilizing.';
     previousLine = `FREQUENCY ${contact.frequency}`;
     activeSpeakerSide = 'left';
     expressionSourceText = currentLine;
     expressionRole = 'contact';
   } else if (state.screen === 'listening') {
-    if (partial) {
+    if (state.listeningMode === 'review') {
+      stateLabel = 'REVIEW TEXT';
+      speakerLabel = 'YOU';
+      currentLine = latestUser?.text ?? 'No captured text yet.';
+      previousLine = null;
+      activeSpeakerSide = 'right';
+      expressionSourceText = currentLine;
+      expressionRole = 'user';
+    } else if (state.listeningMode === 'actions' && latestUser) {
+      stateLabel = 'READY';
+      speakerLabel = 'YOU';
+      currentLine = latestUser.text;
+      previousLine = latestContact ? shortenLine(`${latestContact.speaker.toUpperCase()}: ${latestContact.text}`, 76) : null;
+      activeSpeakerSide = 'right';
+      expressionSourceText = currentLine;
+      expressionRole = 'user';
+    } else if (partial) {
       stateLabel = 'SPEAK';
       speakerLabel = 'YOU';
       currentLine = partial;
@@ -167,22 +183,12 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
       activeSpeakerSide = 'right';
       expressionSourceText = partial;
       expressionRole = 'user';
-    } else if (latestContact) {
-      stateLabel = 'LISTEN';
-      speakerLabel = latestContact.speaker.toUpperCase();
-      currentLine = latestContact.text;
-      previousLine = latestUser ? shortenLine(`${latestUser.speaker.toUpperCase()}: ${latestUser.text}`, 76) : null;
-      activeSpeakerSide = 'left';
-      currentEntry = latestContact;
-      expressionSourceText = latestContact.text;
-      expressionSourceEmotion = latestContact.emotion;
-      expressionRole = latestContact.role;
     } else {
-      stateLabel = 'YOUR TURN';
+      stateLabel = 'SPEAK';
       speakerLabel = 'YOU';
       currentLine = shouldShowNoConfirmedSpeech(state)
-        ? 'No confirmed speech yet. Speak again when ready.'
-        : 'Your line is open. Speak when ready.';
+        ? 'No confirmed speech yet. Speak again.'
+        : 'Speak when ready.';
       previousLine = null;
       activeSpeakerSide = 'right';
       expressionSourceText = currentLine;
@@ -207,9 +213,9 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
     const latestLine = state.transcript.length > 0
       ? state.transcript[state.transcript.length - 1]
       : null;
-    stateLabel = 'CALL ENDED';
+    stateLabel = 'LINK CLOSED';
     speakerLabel = 'SYSTEM';
-    currentLine = 'Codec link closed. Redial or return to directory.';
+    currentLine = 'Transmission complete. Return or redial.';
     previousLine = latestLine ? shortenLine(`${latestLine.speaker.toUpperCase()}: ${latestLine.text}`, 76) : null;
     activeSpeakerSide = null;
     expressionSourceText = currentLine;

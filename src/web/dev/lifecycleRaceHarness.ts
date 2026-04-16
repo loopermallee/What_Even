@@ -113,16 +113,20 @@ function defineScenarios(): ScenarioDefinition[] {
   return [
     {
       id: 'answer-end-redial-answer',
-      name: 'Answer -> listening -> End -> Redial -> Answer (rapid)',
+      name: 'Greeting -> listening -> End -> Redial -> listening (rapid)',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(35);
         store.endListening();
         await wait(35);
         store.redialCurrentContact();
         await wait(35);
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(80);
       },
       check: (_baseline, finalState) => {
@@ -135,12 +139,15 @@ function defineScenarios(): ScenarioDefinition[] {
     },
     {
       id: 'answer-continue-active-back',
-      name: 'Answer -> listening -> Continue -> active -> Back (rapid)',
+      name: 'Listening -> transmit -> active -> Back (rapid)',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(35);
-        store.continueListeningAndStartActiveCall();
+        store.commitUserFinalTranscript('Need a quick status update.', { speaker: 'YOU' });
+        store.transmitCurrentUserTurn();
         await wait(35);
         store.endCall();
         await wait(35);
@@ -156,13 +163,16 @@ function defineScenarios(): ScenarioDefinition[] {
     },
     {
       id: 'repeated-continue',
-      name: 'Repeated Continue taps',
+      name: 'Repeated Transmit taps',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(30);
+        store.commitUserFinalTranscript('Report your status.', { speaker: 'YOU' });
         for (let i = 0; i < 5; i += 1) {
-          store.continueListeningAndStartActiveCall();
+          store.transmitCurrentUserTurn();
           await wait(12);
         }
       },
@@ -179,7 +189,9 @@ function defineScenarios(): ScenarioDefinition[] {
       name: 'Repeated End taps',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(25);
         for (let i = 0; i < 5; i += 1) {
           store.endListening();
@@ -200,11 +212,14 @@ function defineScenarios(): ScenarioDefinition[] {
       run: async ({ store, wait }) => {
         store.setSelectedContactIndex(0);
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(25);
         store.setSelectedContactIndex(1);
         await wait(15);
-        store.continueListeningAndStartActiveCall();
+        store.commitUserFinalTranscript('Hold your position.', { speaker: 'YOU' });
+        store.transmitCurrentUserTurn();
         await wait(20);
         store.setSelectedContactIndex(2);
       },
@@ -226,7 +241,9 @@ function defineScenarios(): ScenarioDefinition[] {
       name: 'Stale audio callbacks after listening exit',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(40);
         store.endListening();
         await wait(320);
@@ -249,7 +266,9 @@ function defineScenarios(): ScenarioDefinition[] {
       name: 'Stale STT callbacks after listening exit',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(40);
         store.endListening();
         await wait(380);
@@ -275,7 +294,9 @@ function defineScenarios(): ScenarioDefinition[] {
       name: 'Retry timer cancellation on exit',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(45);
         store.endListening();
         store.backToContacts();
@@ -295,7 +316,9 @@ function defineScenarios(): ScenarioDefinition[] {
       name: 'Cleanup while listening or retry pending',
       run: async ({ store, wait }) => {
         store.goToIncomingForSelectedContact();
-        store.answerIncomingAndStartListening();
+        store.presentOutboundGreeting();
+        await wait(20);
+        store.enterListeningTurn();
         await wait(45);
         store.backToContacts();
         await wait(180);

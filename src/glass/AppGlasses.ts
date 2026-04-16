@@ -18,8 +18,12 @@ export class AppGlasses {
     this.store = store;
   }
 
+  private getView() {
+    return selectGlassScreenView(this.store.getState());
+  }
+
   getPortraitAssetKey() {
-    return selectGlassPortraitState(this.store.getState()).portraitAsset;
+    return this.getView().showPortrait ? this.getView().portraitAsset ?? null : null;
   }
 
   getPortraitState(): GlassPortraitState {
@@ -27,8 +31,8 @@ export class AppGlasses {
   }
 
   getActionSeedIndex() {
-    const view = selectGlassScreenView(this.store.getState());
-    return view.selectedActionIndex;
+    const view = this.getView();
+    return view.showActions ? view.selectedActionIndex : null;
   }
 
   getDialogueText() {
@@ -46,11 +50,12 @@ export class AppGlasses {
   }
 
   getActionItems() {
-    return selectActionItemsForGlasses(this.store.getState());
+    const view = this.getView();
+    return view.showActions ? selectActionItemsForGlasses(this.store.getState()) : [];
   }
 
   shouldAnimateCursor() {
-    return selectGlassScreenView(this.store.getState()).liveLineKind !== 'none';
+    return this.getView().liveLineKind !== 'none';
   }
 
   getCursorBlinkIntervalMs() {
@@ -102,56 +107,51 @@ export class AppGlasses {
     }
 
     if (state.screen === 'incoming') {
-      if (input === 'UP') {
-        this.store.setIncomingActionIndex(0);
+      if (input === 'DOUBLE_TAP') {
+        this.store.backToContacts();
         return { changed: true, requestClose: false };
       }
 
-      if (input === 'DOWN') {
-        this.store.setIncomingActionIndex(1);
-        return { changed: true, requestClose: false };
-      }
-
-      if (input === 'TAP') {
-        if (this.store.getState().incomingActionIndex === 0) {
-          this.store.answerIncomingAndStartListening();
-        } else {
-          this.store.ignoreIncoming();
-        }
-        return { changed: true, requestClose: false };
-      }
-
-      return { changed: false, requestClose: input === 'DOUBLE_TAP' };
+      return { changed: false, requestClose: false };
     }
 
     if (state.screen === 'listening') {
-      const listeningState = this.store.getState();
-      const hasLiveDraft =
-        listeningState.sttPartialTranscript.trim().length > 0 ||
-        (
-          listeningState.sttDraftDisplayText.trim().length > 0 &&
-          listeningState.sttDraftVisibleUntil !== null &&
-          Date.now() <= listeningState.sttDraftVisibleUntil
-        );
+      if (state.listeningMode === 'review') {
+        if (input === 'UP') {
+          this.store.moveListeningReviewOffset(-1);
+          return { changed: true, requestClose: false };
+        }
+
+        if (input === 'DOWN') {
+          this.store.moveListeningReviewOffset(1);
+          return { changed: true, requestClose: false };
+        }
+
+        if (input === 'TAP' || input === 'DOUBLE_TAP') {
+          this.store.exitListeningReviewMode();
+          return { changed: true, requestClose: false };
+        }
+
+        return { changed: false, requestClose: false };
+      }
+
+      if (state.listeningMode === 'capture') {
+        if (input === 'DOUBLE_TAP') {
+          this.store.endListening();
+          return { changed: true, requestClose: false };
+        }
+
+        return { changed: false, requestClose: false };
+      }
+
+      const actionCount = this.getActionItems().length;
       if (input === 'UP') {
-        this.store.setListeningActionIndex(0);
+        this.store.setListeningActionIndex(Math.max(0, state.listeningActionIndex - 1));
         return { changed: true, requestClose: false };
       }
 
       if (input === 'DOWN') {
-        this.store.setListeningActionIndex(1);
-        return { changed: true, requestClose: false };
-      }
-
-      if (input === 'TAP') {
-        if (this.store.getState().listeningActionIndex === 0) {
-          this.store.continueListeningAndStartActiveCall();
-        } else if (hasLiveDraft) {
-          this.store.clearSttPartialTranscript();
-        } else {
-          this.store.endListening();
-        }
-
+        this.store.setListeningActionIndex(Math.min(Math.max(0, actionCount - 1), state.listeningActionIndex + 1));
         return { changed: true, requestClose: false };
       }
 
@@ -160,17 +160,24 @@ export class AppGlasses {
         return { changed: true, requestClose: false };
       }
 
+      if (input === 'TAP') {
+        if (state.listeningActionIndex === 0) {
+          this.store.transmitCurrentUserTurn();
+        } else if (state.listeningActionIndex === 1) {
+          this.store.retryListeningTurn();
+        } else {
+          this.store.enterListeningReviewMode();
+        }
+
+        return { changed: true, requestClose: false };
+      }
+
       return { changed: false, requestClose: false };
     }
 
     if (state.screen === 'active') {
-      if (input === 'UP') {
+      if (input === 'UP' || input === 'DOWN') {
         this.store.setActiveActionIndex(0);
-        return { changed: true, requestClose: false };
-      }
-
-      if (input === 'DOWN') {
-        this.store.setActiveActionIndex(1);
         return { changed: true, requestClose: false };
       }
 
@@ -180,12 +187,7 @@ export class AppGlasses {
       }
 
       if (input === 'TAP') {
-        if (this.store.getState().activeActionIndex === 0) {
-          this.store.advanceDialogueOrEnd();
-        } else {
-          this.store.endCall();
-        }
-
+        this.store.advanceDialogueOrEnd();
         return { changed: true, requestClose: false };
       }
 
@@ -205,9 +207,9 @@ export class AppGlasses {
 
       if (input === 'TAP') {
         if (this.store.getState().endedActionIndex === 0) {
-          this.store.redialCurrentContact();
-        } else {
           this.store.backToContacts();
+        } else {
+          this.store.redialCurrentContact();
         }
 
         return { changed: true, requestClose: false };
@@ -257,32 +259,40 @@ export class AppGlasses {
   }
 
   buildTextOnlyRebuildContainer(): BridgePagePayload {
+    const view = this.getView();
+    const textObject = [this.buildDialogueContainer()];
+    const listObject = view.showActions ? [this.buildStatusListContainer()] : [];
+
     return {
-      containerTotalNum: 2,
-      textObject: [this.buildDialogueContainer()],
-      listObject: [this.buildStatusListContainer()],
+      containerTotalNum: textObject.length + listObject.length,
+      textObject,
+      listObject: listObject.length > 0 ? listObject : undefined,
     };
   }
 
   buildRebuildContainer(): BridgePagePayload {
+    const view = this.getView();
+    const textObject = [this.buildDialogueContainer()];
+    const imageObject = view.showPortrait ? [this.buildPortraitImageContainer()] : [];
+    const listObject = view.showActions ? [this.buildStatusListContainer()] : [];
+
     return {
-      containerTotalNum: 3,
-      imageObject: [this.buildPortraitImageContainer()],
-      textObject: [this.buildDialogueContainer()],
-      listObject: [this.buildStatusListContainer()],
+      containerTotalNum: textObject.length + imageObject.length + listObject.length,
+      imageObject: imageObject.length > 0 ? imageObject : undefined,
+      textObject,
+      listObject: listObject.length > 0 ? listObject : undefined,
     };
   }
 
   private applyListSelectionFromIndex(index: number) {
     const state = this.store.getState();
-
-    if (state.screen === 'contacts') {
-      this.store.setSelectedContactIndex(index);
+    const view = this.getView();
+    if (!view.showActions) {
       return;
     }
 
-    if (state.screen === 'incoming') {
-      this.store.setIncomingActionIndex(index);
+    if (state.screen === 'contacts') {
+      this.store.setSelectedContactIndex(index);
       return;
     }
 
@@ -291,7 +301,7 @@ export class AppGlasses {
       return;
     }
 
-    if (state.screen === 'listening') {
+    if (state.screen === 'listening' && state.listeningMode === 'actions') {
       this.store.setListeningActionIndex(index);
       return;
     }
@@ -302,25 +312,30 @@ export class AppGlasses {
   }
 
   private buildDialogueContainer() {
+    const view = this.getView();
+    const wide = !view.showPortrait;
+    const tall = !view.showActions;
+
     return {
-      xPosition: 132,
+      xPosition: wide ? 24 : 132,
       yPosition: 38,
-      width: 238,
-      height: 126,
+      width: wide ? 322 : 238,
+      height: tall ? 170 : 126,
       containerID: GLASSES_CONTAINERS.dialogueText.id,
       containerName: GLASSES_CONTAINERS.dialogueText.name,
       content: this.getDialogueText(),
-      isEventCapture: 0,
+      isEventCapture: view.dialogueCapturesInput ? 1 : 0,
     };
   }
 
   private buildStatusListContainer() {
+    const view = this.getView();
     const actions = this.getActionItems();
 
     return {
-      xPosition: 132,
-      yPosition: 182,
-      width: 190,
+      xPosition: view.showPortrait ? 132 : 24,
+      yPosition: view.showPortrait ? 182 : 196,
+      width: view.showPortrait ? 190 : 236,
       height: 72,
       containerID: GLASSES_CONTAINERS.statusList.id,
       containerName: GLASSES_CONTAINERS.statusList.name,
