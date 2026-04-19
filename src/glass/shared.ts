@@ -1,4 +1,4 @@
-import { CONTACTS } from '../app/contacts';
+import { getCurrentContact } from '../app/contacts';
 import { resolveCodecPortraitState } from '../app/codecPortraitState';
 import type { AppState, CodecCharacterId, SpeakerSide, TranscriptEntry } from '../app/types';
 
@@ -220,7 +220,7 @@ export function shouldUseReadMode(options: {
 }
 
 export function getSelectedContact(state: AppState) {
-  return CONTACTS[state.selectedContactIndex] ?? CONTACTS[0];
+  return getCurrentContact(state);
 }
 
 function getPortraitAssetForCharacterId(characterId: CodecCharacterId): PortraitAssetBase {

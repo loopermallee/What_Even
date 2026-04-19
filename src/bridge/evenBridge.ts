@@ -151,6 +151,7 @@ export class EvenBridgeApp {
   private glassesSyncTimer: number | null = null;
   private cursorBlinkTimer: number | null = null;
   private draftVisibilityTimer: number | null = null;
+  private captureProgressTimer: number | null = null;
   private syncInFlight = false;
   private syncQueuedWhileInFlight = false;
   private syncNeedsForcedImages = false;
@@ -230,6 +231,7 @@ export class EvenBridgeApp {
   private launchResumePolicyApplied = false;
   private launchResumeRecoveryAttempted = false;
   private launchAutoEnterConsumed = false;
+  private listeningTimeoutInFlight = false;
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -908,6 +910,10 @@ export class EvenBridgeApp {
       window.clearTimeout(this.draftVisibilityTimer);
       this.draftVisibilityTimer = null;
     }
+    if (this.captureProgressTimer !== null) {
+      window.clearInterval(this.captureProgressTimer);
+      this.captureProgressTimer = null;
+    }
     if (this.portraitCooldownTimer !== null) {
       window.clearTimeout(this.portraitCooldownTimer);
       this.portraitCooldownTimer = null;
@@ -1086,6 +1092,7 @@ export class EvenBridgeApp {
       this.captureCleanupReasonHint(nextState);
       this.syncFastTurnCandidateForState(nextState);
       this.syncOutboundAdvanceForState(nextState);
+      this.syncCaptureProgressForState(nextState);
       const nextSignature = this.getAudioLifecycleSignature(nextState);
       if (nextSignature === this.lastAudioLifecycleSignature) {
         return;
@@ -1097,6 +1104,7 @@ export class EvenBridgeApp {
 
     void this.syncMicForCurrentState();
     this.syncOutboundAdvanceForState(this.store.getState());
+    this.syncCaptureProgressForState(this.store.getState());
   }
 
   private async syncMicForCurrentState() {
@@ -1105,9 +1113,14 @@ export class EvenBridgeApp {
     }
 
     const state = this.store.getState();
-    const shouldBeOpen = state.started && state.screen === 'listening' && state.listeningMode === 'capture';
+    const shouldBeOpen =
+      state.started &&
+      state.screen === 'listening' &&
+      state.listeningMode === 'capture' &&
+      state.listeningCaptureState === 'capturing';
     if (shouldBeOpen) {
       this.audioCapture.startCaptureSession(state.captureSessionStartedAt ?? Date.now());
+      this.audioCapture.resumeCaptureSession();
       if (!this.audioCapture.isMicOpen() && state.audioCaptureStatus !== 'opening') {
         this.pendingCleanupReason = null;
         this.store.setAudioCaptureStatus('opening', { micOpen: false, error: null });
@@ -1117,7 +1130,8 @@ export class EvenBridgeApp {
         const stillShouldBeOpen =
           afterOpenState.started &&
           afterOpenState.screen === 'listening' &&
-          afterOpenState.listeningMode === 'capture';
+          afterOpenState.listeningMode === 'capture' &&
+          afterOpenState.listeningCaptureState === 'capturing';
         if (!stillShouldBeOpen) {
           this.store.log('Mic open completed after listening exit; closing mic for reconciliation.');
           await this.closeMicIfNeeded('post-open-reconcile');
@@ -1132,6 +1146,9 @@ export class EvenBridgeApp {
       return;
     }
 
+    this.flushPendingPartialTranscriptNow('capture-stop');
+    this.audioCapture.pauseCaptureSession();
+    this.store.setElapsedCaptureDuration(this.audioCapture.getElapsedCaptureDurationMs());
     const cleanupReason = this.consumeCleanupReasonHint(state);
     await this.stopSttIfNeeded(cleanupReason);
     await this.closeMicIfNeeded(cleanupReason);
@@ -1463,8 +1480,10 @@ export class EvenBridgeApp {
       screenBeforeDebug: state.screenBeforeDebug,
       turnSendMode: state.turnSendMode,
       selectedContactIndex: state.selectedContactIndex,
+      engagedContactIndex: state.engagedContactIndex,
       listeningActionIndex: state.listeningActionIndex,
       listeningMode: state.listeningMode,
+      listeningCaptureState: state.listeningCaptureState,
       listeningReviewOffset: state.listeningMode === 'review' ? state.listeningReviewOffset : null,
       activeActionIndex: state.activeActionIndex,
       endedActionIndex: state.endedActionIndex,
@@ -1531,6 +1550,52 @@ export class EvenBridgeApp {
     }, remainingMs + 10);
   }
 
+  private clearCaptureProgressTimer() {
+    if (this.captureProgressTimer !== null) {
+      window.clearInterval(this.captureProgressTimer);
+      this.captureProgressTimer = null;
+    }
+  }
+
+  private syncCaptureProgressForState(state: AppState) {
+    const shouldTrack =
+      state.started &&
+      state.screen === 'listening' &&
+      state.listeningMode === 'capture' &&
+      state.listeningCaptureState === 'capturing';
+
+    if (!shouldTrack) {
+      this.clearCaptureProgressTimer();
+      return;
+    }
+
+    const pushProgress = () => {
+      const liveState = this.store.getState();
+      if (
+        !liveState.started ||
+        liveState.screen !== 'listening' ||
+        liveState.listeningMode !== 'capture' ||
+        liveState.listeningCaptureState !== 'capturing'
+      ) {
+        this.clearCaptureProgressTimer();
+        return;
+      }
+
+      const elapsed = this.audioCapture.getElapsedCaptureDurationMs();
+      this.store.setElapsedCaptureDuration(elapsed);
+      if (elapsed >= this.maxCaptureDurationMs) {
+        void this.handleListeningTimeout('capture-budget');
+      }
+    };
+
+    pushProgress();
+    if (this.captureProgressTimer !== null) {
+      return;
+    }
+
+    this.captureProgressTimer = window.setInterval(pushProgress, 100);
+  }
+
   private clearOutboundAdvanceTimer() {
     if (this.outboundAdvanceTimer === null) {
       return;
@@ -1563,7 +1628,12 @@ export class EvenBridgeApp {
 
   private async ensureSttForCurrentState() {
     const state = this.store.getState();
-    if (!state.started || state.screen !== 'listening' || state.listeningMode !== 'capture') {
+    if (
+      !state.started ||
+      state.screen !== 'listening' ||
+      state.listeningMode !== 'capture' ||
+      state.listeningCaptureState !== 'capturing'
+    ) {
       return;
     }
 
@@ -1603,6 +1673,7 @@ export class EvenBridgeApp {
       !state.started ||
       state.screen !== 'listening' ||
       state.listeningMode !== 'capture' ||
+      state.listeningCaptureState !== 'capturing' ||
       state.listeningSessionId !== listeningSessionId
     ) {
       return;
@@ -1664,6 +1735,7 @@ export class EvenBridgeApp {
       !latestState.started ||
       latestState.screen !== 'listening' ||
       latestState.listeningMode !== 'capture' ||
+      latestState.listeningCaptureState !== 'capturing' ||
       latestState.listeningSessionId !== listeningSessionId ||
       !latestState.micOpen ||
       latestState.audioCaptureStatus !== 'listening' ||
@@ -1905,6 +1977,7 @@ export class EvenBridgeApp {
       state.started &&
       state.screen === 'listening' &&
       state.listeningMode === 'capture' &&
+      state.listeningCaptureState === 'capturing' &&
       state.listeningSessionId === listeningSessionId
     );
   }
@@ -1981,6 +2054,7 @@ export class EvenBridgeApp {
       state.started &&
       state.screen === 'listening' &&
       state.listeningMode === 'capture' &&
+      state.listeningCaptureState === 'capturing' &&
       state.listeningSessionId === candidate.listeningSessionId &&
       state.pendingResponseId === null &&
       this.activeSttListeningSessionId === candidate.listeningSessionId &&
@@ -2094,7 +2168,7 @@ export class EvenBridgeApp {
       return;
     }
 
-    if (state.listeningMode !== 'capture') {
+    if (state.listeningMode !== 'capture' || state.listeningCaptureState !== 'capturing') {
       this.clearFastTurnAutoSend('capture-ended');
       return;
     }
@@ -2274,6 +2348,62 @@ export class EvenBridgeApp {
     this.store.setReliabilityDebug({ pendingPartialFlush: false });
   }
 
+  private flushPendingPartialTranscriptNow(reason: string) {
+    if (this.pendingPartialFlushTimer !== null) {
+      window.clearTimeout(this.pendingPartialFlushTimer);
+      this.pendingPartialFlushTimer = null;
+    }
+
+    const nextText = this.pendingPartialText;
+    const nextSessionId = this.pendingPartialListeningSessionId;
+    const nextToken = this.pendingPartialSessionToken;
+    const nextSession = this.pendingPartialSessionRef;
+    this.pendingPartialText = null;
+    this.pendingPartialListeningSessionId = null;
+    this.pendingPartialSessionToken = null;
+    this.pendingPartialSessionRef = null;
+    this.store.setReliabilityDebug({ pendingPartialFlush: false });
+
+    if (
+      !nextText ||
+      nextSessionId === null ||
+      nextToken === null ||
+      !nextSession ||
+      !this.canApplySttCallback(nextSessionId, nextToken, nextSession, `partial-flush:${reason}`)
+    ) {
+      return;
+    }
+
+    this.store.setSttPartialTranscript(nextText);
+  }
+
+  private async handleListeningTimeout(reason: string) {
+    if (this.listeningTimeoutInFlight) {
+      return;
+    }
+
+    const state = this.store.getState();
+    if (
+      !state.started ||
+      state.screen !== 'listening' ||
+      state.listeningMode !== 'capture' ||
+      state.listeningCaptureState !== 'capturing'
+    ) {
+      return;
+    }
+
+    this.listeningTimeoutInFlight = true;
+    try {
+      this.store.log(`Listening timeout reached (${reason}). Completing capture.`);
+      this.flushPendingPartialTranscriptNow('timeout');
+      this.audioCapture.pauseCaptureSession();
+      this.store.setElapsedCaptureDuration(this.audioCapture.getElapsedCaptureDurationMs());
+      this.store.completeListeningCaptureFromTimeout();
+    } finally {
+      this.listeningTimeoutInFlight = false;
+    }
+  }
+
   private captureCleanupReasonHint(nextState: ReturnType<AppStore['getState']>) {
     const previous = this.previousObservedState;
     this.previousObservedState = {
@@ -2404,7 +2534,8 @@ export class EvenBridgeApp {
 
   private currentContactName() {
     const state = this.store.getState();
-    return CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown';
+    const contactIndex = state.engagedContactIndex ?? state.selectedContactIndex;
+    return CONTACTS[contactIndex]?.name ?? 'Unknown';
   }
 
   private shouldSuppressSimulatorUnknownTap(
@@ -2491,7 +2622,9 @@ export class EvenBridgeApp {
       started: state.started,
       screen: state.screen,
       listeningMode: state.listeningMode,
+      listeningCaptureState: state.listeningCaptureState,
       selectedContactIndex: state.selectedContactIndex,
+      engagedContactIndex: state.engagedContactIndex,
       listeningSessionId: state.listeningSessionId,
       micOpen: state.micOpen,
       audioCaptureStatus: state.audioCaptureStatus,

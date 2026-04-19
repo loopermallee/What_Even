@@ -1,4 +1,4 @@
-import type { CodecCharacterId, Contact } from './types';
+import type { AppState, CodecCharacterId, Contact } from './types';
 
 export const RIGHT_CHARACTER = {
   name: 'Snake',
@@ -73,3 +73,28 @@ export const CONTACTS: Contact[] = [
     ],
   },
 ];
+
+export function clampContactIndex(index: number | null | undefined) {
+  if (CONTACTS.length === 0) {
+    return 0;
+  }
+
+  if (typeof index !== 'number' || !Number.isInteger(index)) {
+    return 0;
+  }
+
+  const normalized = index % CONTACTS.length;
+  return normalized >= 0 ? normalized : normalized + CONTACTS.length;
+}
+
+export function getContactByIndex(index: number | null | undefined) {
+  return CONTACTS[clampContactIndex(index)] ?? CONTACTS[0];
+}
+
+export function getCurrentContactIndex(state: Pick<AppState, 'selectedContactIndex' | 'engagedContactIndex'>) {
+  return clampContactIndex(state.engagedContactIndex ?? state.selectedContactIndex);
+}
+
+export function getCurrentContact(state: Pick<AppState, 'selectedContactIndex' | 'engagedContactIndex'>) {
+  return getContactByIndex(getCurrentContactIndex(state));
+}

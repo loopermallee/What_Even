@@ -62,6 +62,7 @@ export type Contact = {
 export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
 export type ResumableGlassesScreen = Exclude<AppScreen, 'debug'>;
 export type ListeningMode = 'capture' | 'actions' | 'review';
+export type ListeningCaptureState = 'capturing' | 'paused';
 export type TurnSendMode = 'review' | 'fast';
 export type LaunchSource = 'glassesMenu' | 'appMenu' | 'unknown';
 
@@ -163,9 +164,11 @@ export type AppState = {
   simulatorSessionDetected: boolean;
   evenNativeHostDetected: boolean;
   selectedContactIndex: number;
+  engagedContactIndex: number | null;
   turnSendMode: TurnSendMode;
   listeningActionIndex: number;
   listeningMode: ListeningMode;
+  listeningCaptureState: ListeningCaptureState;
   listeningReviewOffset: number;
   activeActionIndex: number;
   endedActionIndex: number;

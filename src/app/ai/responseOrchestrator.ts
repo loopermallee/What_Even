@@ -1,4 +1,4 @@
-import { CONTACTS } from '../contacts';
+import { getCurrentContact } from '../contacts';
 import { createAppError, isAppError, toErrorMessage } from '../errors';
 import type { AppStore } from '../state';
 import type { AppState } from '../types';
@@ -126,7 +126,7 @@ export class ResponseOrchestrator {
       return null;
     }
 
-    const contact = CONTACTS[state.selectedContactIndex];
+    const contact = getCurrentContact(state);
     if (!contact) {
       return null;
     }

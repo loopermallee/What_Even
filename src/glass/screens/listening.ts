@@ -67,6 +67,14 @@ function buildCaptureDialogue(state: AppState, visibleDraft: string) {
   ].join('\n');
 }
 
+function buildPausedDialogue(state: AppState, capturedText: string) {
+  return formatGlassSpeakerLine({
+    label: state.listeningMode === 'capture' ? 'Paused' : 'You',
+    text: capturedText || 'Listening paused.',
+    maxLines: 12,
+  });
+}
+
 function getVisibleDraft(state: AppState) {
   return {
     partial: state.sttPartialTranscript.trim(),
@@ -95,11 +103,38 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
   const { visibleDraft } = getVisibleDraft(state);
   const pendingUserEntry = getPendingUserEntry(state);
   const capturedText = pendingUserEntry?.text ?? visibleDraft;
-  const reviewContent = formatGlassSpeakerLine({
-    label: state.listeningMode === 'capture' ? getTurnSendModeLabel(state.turnSendMode) : 'You',
-    text: capturedText || '(Recording...)',
-    maxLines: 12,
-  });
+  const reviewContent = state.listeningCaptureState === 'paused'
+    ? buildPausedDialogue(state, capturedText)
+    : formatGlassSpeakerLine({
+      label: state.listeningMode === 'capture' ? getTurnSendModeLabel(state.turnSendMode) : 'You',
+      text: capturedText || '(Recording...)',
+      maxLines: 12,
+    });
+
+  if (state.listeningMode === 'capture' && state.listeningCaptureState === 'paused') {
+    const actionWindow = getWrappedWindow({
+      content: reviewContent,
+      maxCharsPerLine: 27,
+      maxLines: 3,
+      offset: Number.MAX_SAFE_INTEGER,
+    });
+    const actions = capturedText
+      ? ['RESUME', 'TRANSMIT', 'Retry']
+      : ['RESUME', 'Retry'];
+
+    return {
+      screenLabel: '',
+      statusLabel: '',
+      portraitAsset: null,
+      dialogue: actionWindow.text,
+      actions,
+      selectedActionIndex: Math.min(state.listeningActionIndex, actions.length - 1),
+      mode: 'compact',
+      liveLineKind: 'none',
+      showPortrait: false,
+      showActions: true,
+    };
+  }
 
   if ((state.listeningMode === 'actions' || state.listeningMode === 'review') && capturedText) {
     const actionWindow = getWrappedWindow({
@@ -135,5 +170,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     showPortrait: false,
     showActions: false,
     dialogueCapturesInput: true,
+    footerLabel: state.listeningCaptureState === 'capturing' ? 'Tap: Pause' : undefined,
   };
 }

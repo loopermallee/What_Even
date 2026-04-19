@@ -113,6 +113,10 @@ export function generateGreeting(contact: Contact): GeneratedTurn {
   };
 }
 
+export function generateNoSpeechFallback(contact: Contact): GeneratedTurn {
+  return buildContactReply(contact, 'silence');
+}
+
 export function generateDeterministicResponse(contact: Contact, userText: string): GeneratedTurn[] {
   const normalized = userText.trim().toLowerCase();
   const signoff = contact.signoff;

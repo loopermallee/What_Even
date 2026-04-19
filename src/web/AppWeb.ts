@@ -1,4 +1,4 @@
-import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
+import { CONTACTS, getCurrentContact, RIGHT_CHARACTER } from '../app/contacts';
 import { resolveCodecPortraitState, type CodecPortraitScene } from '../app/codecPortraitState';
 import { getTurnSendModeLabel, getVisibleSttDraft } from '../app/presentation';
 import { getScriptedScenariosForContact } from '../app/scriptedScenarios';
@@ -160,11 +160,13 @@ function readFxQueryState(): FxQueryState {
 }
 
 function getUserActionConfig(state: AppState): UserActionConfig | null {
+  const visibleListeningDraft = getVisibleSttDraft(state);
   const latestPendingUser = [...state.transcript].reverse().find((entry) => (
     entry.role === 'user' && (state.lastHandledUserTranscriptId === null || entry.id > state.lastHandledUserTranscriptId)
   )) ?? null;
   const shouldOfferReview = Boolean(
-    latestPendingUser?.text && countWrappedLines(`YOU: ${latestPendingUser.text}`, 27) > 3
+    (latestPendingUser?.text || visibleListeningDraft) &&
+    countWrappedLines(`YOU: ${latestPendingUser?.text ?? visibleListeningDraft}`, 27) > 3
   );
 
   if (state.screen === 'contacts') {
@@ -179,7 +181,21 @@ function getUserActionConfig(state: AppState): UserActionConfig | null {
   }
 
   if (state.screen === 'listening') {
-    if (state.listeningMode === 'actions' && latestPendingUser) {
+    const hasReviewableText = Boolean(latestPendingUser?.text || visibleListeningDraft);
+    if (state.listeningMode === 'capture' && state.listeningCaptureState === 'paused') {
+      return hasReviewableText
+        ? {
+          primary: { id: 'resumeBtn', label: 'Resume' },
+          secondary: { id: 'continueBtn', label: 'Transmit' },
+          tertiary: { id: 'retryBtn', label: 'Retry' },
+        }
+        : {
+          primary: { id: 'resumeBtn', label: 'Resume' },
+          secondary: { id: 'retryBtn', label: 'Retry' },
+        };
+    }
+
+    if (state.listeningMode === 'actions' && hasReviewableText) {
       return {
         primary: { id: 'continueBtn', label: 'Transmit' },
         secondary: { id: 'retryBtn', label: 'Retry' },
@@ -225,7 +241,7 @@ function getRawStateSnapshot(state: AppState) {
     evenNativeHostDetected: state.evenNativeHostDetected,
     selectedContactIndex: state.selectedContactIndex,
     turnSendMode: state.turnSendMode,
-    contact: CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown',
+    contact: getCurrentContact(state).name,
     lifecycle: state.deviceLifecycleState,
     startup: {
       status: state.evenStartupStatus,
@@ -742,7 +758,7 @@ export class AppWeb {
     animationFrame: CodecPortraitAnimationFrame,
     effectiveGlitch: CodecGlitchKind | null,
   ) {
-    const contact = CONTACTS[state.selectedContactIndex];
+    const contact = getCurrentContact(state);
     const actions = getUserActionConfig(state);
     const pickerVisible = state.screen === 'contacts' && this.contactPickerOpen;
     const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
@@ -1460,9 +1476,23 @@ export class AppWeb {
     const continueBtn = document.querySelector<HTMLButtonElement>('#continueBtn');
     if (continueBtn) {
       continueBtn.onclick = () => {
-        if (this.store.getState().screen === 'listening') {
-          this.store.setListeningActionIndex(0);
+        const currentState = this.store.getState();
+        if (currentState.screen === 'listening') {
+          this.store.setListeningActionIndex(
+            currentState.listeningMode === 'capture' && currentState.listeningCaptureState === 'paused' ? 1 : 0
+          );
           this.store.transmitCurrentUserTurn();
+        }
+      };
+    }
+
+    const resumeBtn = document.querySelector<HTMLButtonElement>('#resumeBtn');
+    if (resumeBtn) {
+      resumeBtn.onclick = () => {
+        const currentState = this.store.getState();
+        if (currentState.screen === 'listening') {
+          this.store.setListeningActionIndex(0);
+          this.store.resumeListeningCapture();
         }
       };
     }

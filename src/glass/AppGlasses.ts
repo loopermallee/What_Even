@@ -70,7 +70,13 @@ export class AppGlasses {
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
     const previousState = this.store.getState();
     this.store.setLastInput(input, inspection);
-    const resolvedSelectionIndex = this.applyListSelectionFromInspection(inspection);
+    const resolvedSelectionIndex = this.resolveListSelectionIndex(inspection);
+    if (
+      resolvedSelectionIndex !== null &&
+      this.shouldApplyListSelectionFromInspection(input, previousState.screen, inspection)
+    ) {
+      this.applyListSelectionFromIndex(resolvedSelectionIndex);
+    }
     const state = this.store.getState();
 
     if (input === 'AT_TOP' || input === 'AT_BOTTOM') {
@@ -125,7 +131,12 @@ export class AppGlasses {
     }
 
     if (state.screen === 'listening') {
-      if (state.listeningMode === 'capture') {
+      if (state.listeningMode === 'capture' && state.listeningCaptureState === 'capturing') {
+        if (input === 'TAP') {
+          this.store.pauseListeningCapture();
+          return { changed: true, requestClose: false };
+        }
+
         if (input === 'DOUBLE_TAP') {
           this.store.endListening();
           return { changed: true, requestClose: false };
@@ -157,13 +168,19 @@ export class AppGlasses {
           && resolvedSelectionIndex < actionCount
             ? resolvedSelectionIndex
             : state.listeningActionIndex;
+        const selectedAction = this.getActionItems()[selectedActionIndex] ?? '';
 
-        if (selectedActionIndex === 0) {
+        if (selectedAction === 'RESUME') {
+          this.store.resumeListeningCapture();
+          return { changed: true, requestClose: false };
+        }
+
+        if (selectedAction === 'TRANSMIT') {
           this.store.transmitCurrentUserTurn();
           return { changed: true, requestClose: false };
         }
 
-        if (selectedActionIndex === 1) {
+        if (selectedAction === 'Retry') {
           this.store.retryListeningTurn();
           return { changed: true, requestClose: false };
         }
@@ -205,21 +222,11 @@ export class AppGlasses {
     return { changed: false, requestClose: false };
   }
 
-  private applyListSelectionFromInspection(inspection: RawEventDebugInfo) {
+  private resolveListSelectionIndex(inspection: RawEventDebugInfo) {
     if (inspection.source !== 'listEvent') {
       return null;
     }
 
-    const resolvedIndex = this.resolveListSelectionIndex(inspection);
-    if (resolvedIndex === null) {
-      return null;
-    }
-
-    this.applyListSelectionFromIndex(resolvedIndex);
-    return resolvedIndex;
-  }
-
-  private resolveListSelectionIndex(inspection: RawEventDebugInfo) {
     let resolvedIndex: number | null = null;
 
     if (inspection.currentSelectItemIndex !== null) {
@@ -248,6 +255,18 @@ export class AppGlasses {
     }
 
     return resolvedIndex;
+  }
+
+  private shouldApplyListSelectionFromInspection(
+    input: NormalizedInput,
+    screen: ReturnType<AppStore['getState']>['screen'],
+    inspection: RawEventDebugInfo,
+  ) {
+    if (screen === 'contacts' && input === 'TAP') {
+      return false;
+    }
+
+    return inspection.source === 'listEvent';
   }
 
   buildMinimalStartContainer(): BridgePagePayload {
@@ -334,7 +353,10 @@ export class AppGlasses {
       return;
     }
 
-    if (state.screen === 'listening' && state.listeningMode === 'actions') {
+    if (
+      state.screen === 'listening' &&
+      (state.listeningMode === 'actions' || (state.listeningMode === 'capture' && state.listeningCaptureState === 'paused'))
+    ) {
       this.store.setListeningActionIndex(index);
       return;
     }

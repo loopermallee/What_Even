@@ -13,6 +13,7 @@ export type CharacterFallbackTemplates = {
   location: string;
   hold: string;
   support: string;
+  silence: string;
   unknown: string;
   default: string;
 };
@@ -65,6 +66,7 @@ const CHARACTER_CONTRACTS: Record<SupportedCharacterId, CharacterContract> = {
         location: 'Understood. I cannot confirm a new position from here. Keep your route flexible and avoid open corridors.',
         hold: 'Understood. Hold your position and watch for movement. Move only when the path settles.',
         support: 'Understood. I can help with mission guidance and immediate tactical checks.',
+        silence: 'No clear traffic came through. Key the mic again when you are ready.',
         unknown: 'I cannot confirm that from this channel. Give me your situation and I will advise the next move.',
         default: 'Understood. Stay focused and keep me updated at the next checkpoint.',
       },
@@ -100,6 +102,7 @@ const CHARACTER_CONTRACTS: Record<SupportedCharacterId, CharacterContract> = {
         location: 'Okay, got it. I cannot verify your exact position from here. Give me a route marker or nearby system and I can narrow it down.',
         hold: 'Okay, got it. Hold for a second and let me keep watching the feed for any change.',
         support: 'Okay, got it. I can help with systems, patrol timing, and route checks from here.',
+        silence: 'I did not catch anything clear on the line. Try me again when you have it.',
         unknown: 'I do not know that from my side. If it is on the feed or tied to the system, I can try to narrow it down.',
         default: 'Okay, got it. I am tracking what I can from here, so keep me posted.',
       },
@@ -135,6 +138,7 @@ const CHARACTER_CONTRACTS: Record<SupportedCharacterId, CharacterContract> = {
         location: 'Copy. I cannot confirm more than what I can see from my position. Use cover and keep moving.',
         hold: 'Copy. Hold tight for a moment. I will call it if the opening shifts.',
         support: 'Copy. I can help with route pressure and movement timing, not miracles.',
+        silence: 'You are breaking up. Hit the line again when you have something solid.',
         unknown: 'I do not know that from where I am standing. Ask me about the route, the opening, or what I can actually see.',
         default: 'Copy. Keep your head down and move when the window is there.',
       },
@@ -170,6 +174,7 @@ const CHARACTER_CONTRACTS: Record<SupportedCharacterId, CharacterContract> = {
         location: 'Understood. I cannot confirm more than the route timing from here. Use the pattern and trust your next marker.',
         hold: 'Understood. Hold for the next clean window. I will keep watching the timing.',
         support: 'Understood. I can help with route timing, navigation cues, and keeping this channel organized.',
+        silence: 'The channel stayed quiet on my side. Try again when you are ready.',
         unknown: 'I do not know that for certain. If it relates to timing, routing, or what this channel can confirm, I can help.',
         default: 'Understood. Stay focused and move with the route timing.',
       },
@@ -230,6 +235,7 @@ export function getCharacterContract(contact: Contact): CharacterContract {
         location: `${contact.ackStyle} I cannot confirm more than the current channel view.`,
         hold: `${contact.ackStyle} Hold for the next clear opening.`,
         support: `${contact.ackStyle} I can help with the immediate situation on this line.`,
+        silence: 'The line stayed quiet. Try me again when you are ready.',
         unknown: `${contact.ackStyle} I cannot confirm that from this channel.`,
         default: `${contact.ackStyle} Stay focused and keep me updated.`,
       },

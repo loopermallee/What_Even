@@ -96,6 +96,8 @@ export class AudioCaptureController {
   private totalBufferedBytes = 0;
   private lastAudioFrameAt: number | null = null;
   private captureStartedAt: number | null = null;
+  private activeCaptureStartedAt: number | null = null;
+  private accumulatedCaptureDurationMs = 0;
   private micOpen = false;
   private operationChain: Promise<MicOperationResult> = Promise.resolve({
     ok: true,
@@ -126,6 +128,37 @@ export class AudioCaptureController {
 
     this.clearBuffer();
     this.captureStartedAt = startedAt;
+    this.activeCaptureStartedAt = startedAt;
+    this.accumulatedCaptureDurationMs = 0;
+  }
+
+  resumeCaptureSession(resumedAt = Date.now()) {
+    if (this.captureStartedAt === null) {
+      this.startCaptureSession(resumedAt);
+      return;
+    }
+
+    if (this.activeCaptureStartedAt !== null) {
+      return;
+    }
+
+    this.activeCaptureStartedAt = resumedAt;
+  }
+
+  pauseCaptureSession(pausedAt = Date.now()) {
+    if (this.activeCaptureStartedAt === null) {
+      return;
+    }
+
+    this.accumulatedCaptureDurationMs += Math.max(0, pausedAt - this.activeCaptureStartedAt);
+    this.activeCaptureStartedAt = null;
+  }
+
+  getElapsedCaptureDurationMs(now = Date.now()) {
+    const liveDuration = this.activeCaptureStartedAt === null
+      ? 0
+      : Math.max(0, now - this.activeCaptureStartedAt);
+    return Math.round(this.accumulatedCaptureDurationMs + liveDuration);
   }
 
   requestMicOpen(bridge: BridgeLike) {
@@ -214,9 +247,7 @@ export class AudioCaptureController {
       this.totalBufferedDurationMs = 0;
     }
 
-    const elapsedCaptureDurationMs = this.captureStartedAt === null
-      ? 0
-      : Math.max(0, now - this.captureStartedAt);
+    const elapsedCaptureDurationMs = this.getElapsedCaptureDurationMs(now);
 
     if (DEBUG_STT_COUNTDOWN) {
       console.debug('[stt-countdown:audio]', {

@@ -1,5 +1,5 @@
-import { CONTACTS } from './contacts';
-import { generateGreeting } from './responseEngine';
+import { clampContactIndex, CONTACTS, getContactByIndex, getCurrentContactIndex } from './contacts';
+import { generateGreeting, generateNoSpeechFallback } from './responseEngine';
 import { createScriptedTranscriptTurns, getScriptedScenarioById } from './scriptedScenarios';
 import { hasEvenNativeHost } from '../bridge/nativeHost';
 import type {
@@ -9,6 +9,7 @@ import type {
   DevicePageLifecycleState,
   EvenStartupBlockedCode,
   LaunchSource,
+  ListeningCaptureState,
   ListeningMode,
   NormalizedInput,
   PersistedResumeState,
@@ -196,6 +197,7 @@ function createInitialListeningState() {
   return {
     listeningActionIndex: 0,
     listeningMode: 'capture' as ListeningMode,
+    listeningCaptureState: 'capturing' as ListeningCaptureState,
     listeningReviewOffset: 0,
   };
 }
@@ -257,6 +259,7 @@ export function createInitialState(): AppState {
     simulatorSessionDetected: false,
     evenNativeHostDetected: hasEvenNativeHost(),
     selectedContactIndex: 0,
+    engagedContactIndex: null,
     turnSendMode: readTurnSendMode(),
     ...createInitialListeningState(),
     activeActionIndex: 0,
@@ -365,15 +368,19 @@ export class AppStore {
   }
 
   private clampContactIndex(index: number | null) {
-    if (CONTACTS.length === 0) {
-      return 0;
-    }
+    return clampContactIndex(index);
+  }
 
-    if (index === null || !Number.isInteger(index) || index < 0 || index >= CONTACTS.length) {
-      return 0;
-    }
+  private getCurrentContactIndex() {
+    return getCurrentContactIndex(this.state);
+  }
 
-    return index;
+  private getCurrentContact() {
+    return getContactByIndex(this.getCurrentContactIndex());
+  }
+
+  private getUsableListeningDraftText() {
+    return this.state.sttPartialTranscript.trim() || this.state.sttDraftDisplayText.trim();
   }
 
   private patchSpeechWindow(nextSpeechWindow: SpeechWindowState) {
@@ -481,7 +488,7 @@ export class AppStore {
       return this.state.transcript;
     }
 
-    const contactName = CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    const contactName = this.getCurrentContact().name;
     const timestamp = Date.now();
     const entries: TranscriptEntry[] = responseTurns.map((turn) => ({
       id: this.allocateTranscriptId(),
@@ -636,8 +643,7 @@ export class AppStore {
   }
 
   setSelectedContactIndex(index: number) {
-    const size = CONTACTS.length;
-    const normalized = ((index % size) + size) % size;
+    const normalized = this.clampContactIndex(index);
     if (normalized === this.state.selectedContactIndex) {
       this.persistResumeState({ lastContactIndex: normalized });
       return;
@@ -674,7 +680,7 @@ export class AppStore {
   }
 
   setListeningActionIndex(index: number) {
-    this.patch({ listeningActionIndex: clampActionIndex(index, 2) });
+    this.patch({ listeningActionIndex: clampActionIndex(index, 3) });
   }
 
   setListeningMode(mode: ListeningMode) {
@@ -684,10 +690,24 @@ export class AppStore {
 
     this.patch({
       listeningMode: mode,
+      listeningCaptureState: mode === 'capture' ? this.state.listeningCaptureState : 'paused',
       listeningReviewOffset: mode === 'review' ? this.state.listeningReviewOffset : 0,
-      listeningActionIndex: mode === 'actions' ? clampActionIndex(this.state.listeningActionIndex, 2) : 0,
+      listeningActionIndex: mode === 'actions' ? clampActionIndex(this.state.listeningActionIndex, 3) : 0,
     });
     this.persistResumeState({ lastListeningMode: mode });
+  }
+
+  setListeningCaptureState(captureState: ListeningCaptureState) {
+    if (this.state.listeningCaptureState === captureState) {
+      return;
+    }
+
+    this.patch({
+      listeningCaptureState: captureState,
+      listeningActionIndex: captureState === 'paused'
+        ? clampActionIndex(this.state.listeningActionIndex, 3)
+        : 0,
+    });
   }
 
   enterListeningReviewMode() {
@@ -754,6 +774,7 @@ export class AppStore {
 
     const basePatch: Partial<AppState> = {
       selectedContactIndex,
+      engagedContactIndex: options.screen === 'contacts' ? null : selectedContactIndex,
       speechWindow: createInitialSpeechWindowState(),
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
@@ -789,6 +810,7 @@ export class AppStore {
         screen: 'listening',
         transcript: [],
         listeningMode: safeListeningMode,
+        listeningCaptureState: safeListeningMode === 'capture' ? 'capturing' : 'paused',
         listeningActionIndex: 0,
         listeningReviewOffset: 0,
         activeActionIndex: 0,
@@ -894,6 +916,7 @@ export class AppStore {
   goToIncomingForSelectedContact() {
     this.patch({
       screen: 'incoming',
+      engagedContactIndex: this.state.selectedContactIndex,
       ...createInitialListeningState(),
       activeActionIndex: 0,
       endedActionIndex: 0,
@@ -914,7 +937,7 @@ export class AppStore {
       return;
     }
 
-    const contact = CONTACTS[this.state.selectedContactIndex];
+    const contact = this.getCurrentContact();
     if (!contact) {
       return;
     }
@@ -950,6 +973,7 @@ export class AppStore {
     const captureSessionStartedAt = Date.now();
     this.patch({
       screen: 'listening',
+      engagedContactIndex: this.getCurrentContactIndex(),
       ...createInitialListeningState(),
       activeActionIndex: 0,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
@@ -966,14 +990,29 @@ export class AppStore {
       return;
     }
 
-    const newestUnhandledUser = this.findNewestUnhandledUserEntry();
+    let newestUnhandledUser = this.findNewestUnhandledUserEntry();
     if (!newestUnhandledUser) {
+      const draftText = this.getUsableListeningDraftText();
+      if (draftText) {
+        const committed = this.commitUserFinalTranscript(draftText, {
+          speaker: 'YOU',
+          contactName: this.getCurrentContact().name,
+        });
+        if (committed) {
+          newestUnhandledUser = this.findNewestUnhandledUserEntry();
+        }
+      }
+    }
+
+    if (!newestUnhandledUser) {
+      this.presentNoSpeechFallback();
       return;
     }
 
     const enteredAt = Date.now();
     this.patch({
       screen: 'active',
+      engagedContactIndex: this.getCurrentContactIndex(),
       dialogueIndex: -1,
       activeActionIndex: 0,
       ...createInitialListeningState(),
@@ -988,7 +1027,7 @@ export class AppStore {
       ...createInitialScriptedState(),
     });
 
-    const contact = CONTACTS[this.state.selectedContactIndex];
+    const contact = this.getCurrentContact();
     if (!contact) {
       this.patch({
         turnState: 'error',
@@ -1120,6 +1159,7 @@ export class AppStore {
   backToContacts() {
     this.patch({
       screen: 'contacts',
+      engagedContactIndex: null,
       ...createInitialListeningState(),
       activeActionIndex: 0,
       endedActionIndex: 0,
@@ -1149,6 +1189,7 @@ export class AppStore {
 
     this.patch({
       screen: 'listening',
+      engagedContactIndex: this.getCurrentContactIndex(),
       transcript,
       activeTranscriptCursor: getLatestTranscriptCursor(transcript),
       speechWindow: createInitialSpeechWindowState(),
@@ -1162,6 +1203,83 @@ export class AppStore {
       ...createInitialSttState(listeningSessionId),
     });
     this.persistResumableScreen('listening');
+  }
+
+  pauseListeningCapture() {
+    if (this.state.screen !== 'listening' || this.state.listeningMode !== 'capture') {
+      return;
+    }
+
+    if (this.state.sttPartialTranscript.trim()) {
+      this.clearSttPartialTranscript();
+    }
+
+    this.patch({
+      listeningCaptureState: 'paused',
+      listeningActionIndex: 0,
+      listeningReviewOffset: 0,
+    });
+  }
+
+  resumeListeningCapture() {
+    if (this.state.screen !== 'listening' || this.state.listeningMode !== 'capture') {
+      return;
+    }
+
+    this.patch({
+      listeningCaptureState: 'capturing',
+      listeningActionIndex: 0,
+    });
+  }
+
+  completeListeningCaptureFromTimeout() {
+    if (this.state.screen !== 'listening' || this.state.listeningMode !== 'capture') {
+      return;
+    }
+
+    if (this.state.sttPartialTranscript.trim()) {
+      this.clearSttPartialTranscript();
+    }
+
+    if (this.findNewestUnhandledUserEntry() || this.getUsableListeningDraftText()) {
+      this.patch({
+        listeningMode: 'actions',
+        listeningCaptureState: 'paused',
+        listeningActionIndex: 0,
+        listeningReviewOffset: 0,
+        responseError: null,
+      });
+      this.persistResumeState({ lastListeningMode: 'actions' });
+      return;
+    }
+
+    this.presentNoSpeechFallback();
+  }
+
+  presentNoSpeechFallback() {
+    const contact = this.getCurrentContact();
+    const transcript = this.appendGeneratedResponseTurns([generateNoSpeechFallback(contact)]);
+    const activeTranscriptCursor = getLatestTranscriptCursor(transcript);
+    const entry = transcript[activeTranscriptCursor] ?? null;
+
+    this.patch({
+      screen: 'active',
+      engagedContactIndex: this.getCurrentContactIndex(),
+      transcript,
+      activeTranscriptCursor,
+      speechWindow: this.buildSpeechWindowForEntry(entry),
+      activeActionIndex: 0,
+      ...createInitialListeningState(),
+      ...createInitialScriptedState(),
+      ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
+      turnState: 'complete',
+      pendingResponseId: null,
+      responseError: null,
+      responseStatusPhase: 'standby',
+      responseStatusTimestamp: Date.now(),
+    });
+    this.persistResumableScreen('active');
   }
 
   setAudioCaptureStatus(status: AudioCaptureStatus, options?: { micOpen?: boolean; error?: string | null }) {
@@ -1231,6 +1349,15 @@ export class AppStore {
       partialText: this.state.sttPartialTranscript,
       listeningActivityLevel: update.listeningActivityLevel,
     });
+  }
+
+  setElapsedCaptureDuration(elapsedCaptureDurationMs: number) {
+    const normalized = Math.max(0, Math.round(elapsedCaptureDurationMs));
+    if (this.state.elapsedCaptureDurationMs === normalized) {
+      return;
+    }
+
+    this.patch({ elapsedCaptureDurationMs: normalized });
   }
 
   setSttStatus(status: SttStatus, options?: { error?: string | null }) {
@@ -1308,7 +1435,7 @@ export class AppStore {
       return false;
     }
 
-    const contactName = options?.contactName ?? CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    const contactName = options?.contactName ?? this.getCurrentContact().name;
     const entry: TranscriptEntry = {
       id: this.allocateTranscriptId(),
       role: 'user',
@@ -1323,6 +1450,7 @@ export class AppStore {
       transcript,
       activeTranscriptCursor: getLatestTranscriptCursor(transcript),
       listeningMode: this.state.screen === 'listening' ? 'actions' : this.state.listeningMode,
+      listeningCaptureState: this.state.screen === 'listening' ? 'paused' : this.state.listeningCaptureState,
       listeningActionIndex: 0,
       listeningReviewOffset: 0,
       ...createInitialScriptedState(),
@@ -1440,7 +1568,7 @@ export class AppStore {
     const baseTranscript = placeholderIndex >= 0
       ? this.state.transcript.filter((_, index) => index !== placeholderIndex)
       : this.state.transcript;
-    const contactName = CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    const contactName = this.getCurrentContact().name;
     const timestamp = Date.now();
     const entries: TranscriptEntry[] = responseTurns.map((turn) => ({
       id: this.allocateTranscriptId(),
@@ -1534,6 +1662,7 @@ export class AppStore {
     const activeTranscriptCursor = 0;
     this.patch({
       selectedContactIndex: options.contactIndex,
+      engagedContactIndex: options.contactIndex,
       screen: 'active',
       activeActionIndex: 0,
       ...createInitialListeningState(),

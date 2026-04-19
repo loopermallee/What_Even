@@ -55,7 +55,10 @@ export function shouldShowNoConfirmedSpeech(state: Pick<
 
 export function getVisibleSttDraft(state: Pick<
   AppState,
-  'sttPartialTranscript'
+  'screen'
+  | 'listeningMode'
+  | 'listeningCaptureState'
+  | 'sttPartialTranscript'
   | 'sttDraftDisplayText'
   | 'sttDraftVisibleUntil'
 >) {
@@ -66,8 +69,14 @@ export function getVisibleSttDraft(state: Pick<
     state.sttDraftVisibleUntil !== null &&
     Date.now() <= state.sttDraftVisibleUntil
   );
+  const listeningDraftPinned = Boolean(
+    !partial &&
+    state.screen === 'listening' &&
+    (state.listeningMode !== 'capture' || state.listeningCaptureState === 'paused') &&
+    state.sttDraftDisplayText.trim()
+  );
 
-  return partial || (draftGraceActive ? state.sttDraftDisplayText.trim() : '');
+  return partial || (draftGraceActive || listeningDraftPinned ? state.sttDraftDisplayText.trim() : '');
 }
 
 export function getTurnSendModeLabel(mode: TurnSendMode) {

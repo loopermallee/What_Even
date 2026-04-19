@@ -1,4 +1,4 @@
-import { CONTACTS, RIGHT_CHARACTER } from './contacts';
+import { getCurrentContact, RIGHT_CHARACTER } from './contacts';
 import { getCanonicalTurnLabel, getResponseStatusLabel, getVisibleSttDraft, shouldShowNoConfirmedSpeech } from './presentation';
 import { resolveCodecExpression, resolveCodecPortraitFamily } from './portraitExpression';
 import type {
@@ -132,7 +132,7 @@ function buildSideState(options: {
 }
 
 export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
-  const contact = CONTACTS[state.selectedContactIndex];
+  const contact = getCurrentContact(state);
   const visibleDraft = getVisibleSttDraft(state);
   const latestUser = getLatestEntryByRole(state, ['user']);
   const latestContact = getLatestEntryByRole(state, ['contact', 'system']);
