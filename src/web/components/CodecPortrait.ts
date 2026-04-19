@@ -31,6 +31,7 @@ export function renderCodecPortrait(options: {
     || options.characterId === 'otacon'
     || options.characterId === 'meryl'
     || options.characterId === 'colonel'
+    || options.characterId === 'meiling'
     ? options.characterId
     : '';
 

@@ -61,6 +61,7 @@ export const CONTACTS: Contact[] = [
     code: 'NAV',
     frequency: '140.96',
     portraitTag: 'ML',
+    characterId: 'meiling',
     greeting: 'Mei Ling here. Ready when you are.',
     ackStyle: 'Understood. I am logging that now.',
     signoff: 'Stay focused. I will keep this channel ready.',

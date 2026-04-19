@@ -39,6 +39,7 @@ const snakeSheetUrl = new URL('../web/assets/codec/snake-sheet.png', import.meta
 const otaconSheetUrl = new URL('../web/assets/codec/otacon-sheet.png', import.meta.url).href;
 const merylSheetUrl = new URL('../web/assets/codec/meryl-sheet.png', import.meta.url).href;
 const colonelSheetUrl = new URL('../web/assets/codec/colonel-sheet.png', import.meta.url).href;
+const meilingSheetUrl = new URL('../web/assets/codec/meiling-sheet.png', import.meta.url).href;
 
 function rect(x: number, y: number, width: number, height: number): CodecPortraitFrameRect {
   return { x, y, width, height };
@@ -166,6 +167,32 @@ export const CODEC_PORTRAIT_MANIFEST = {
       alert: 'colonel.alert.idle',
     },
   },
+  meiling: {
+    characterId: 'meiling',
+    sheetUrl: meilingSheetUrl,
+    webCrop: cropPreset(1.2, 0, -4),
+    glassCrop: cropPreset(1.2, 0, -4),
+    families: {
+      neutral: {
+        idle: frame('meiling.neutral.idle', rect(61, 550, 52, 89), 20),
+        talk1: frame('meiling.neutral.talk1', rect(184, 550, 52, 89), 22),
+        talk2: frame('meiling.neutral.talk2', rect(244, 550, 52, 89), 23),
+      },
+      alert: {
+        idle: frame('meiling.alert.idle', rect(218, 33, 52, 89), 3),
+        talk1: frame('meiling.alert.talk1', rect(218, 128, 52, 89), 8),
+        talk2: frame('meiling.alert.talk2', rect(338, 128, 52, 89), 10),
+      },
+    },
+    blink: null,
+    special: {
+      misc: frame('meiling.special.misc', rect(55, 672, 52, 89), 25),
+    },
+    glasses: {
+      default: 'meiling.neutral.idle',
+      alert: 'meiling.alert.idle',
+    },
+  },
 } satisfies Record<CodecCharacterId, CodecPortraitCharacterManifest>;
 
 const CODEC_PORTRAIT_FRAME_LOOKUP = new Map<CodecPortraitFrameKey, CodecPortraitManifestFrame>();
@@ -236,4 +263,3 @@ export function getCodecPortraitFrameWithFallback(options: {
   return getCodecPortraitFamilyIdleFrame(options.characterId, requestedFamily)
     ?? getCodecPortraitFamilyIdleFrame(options.characterId, 'neutral');
 }
-

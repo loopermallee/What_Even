@@ -1,5 +1,5 @@
 export type SpeakerSide = 'left' | 'right';
-export type CodecCharacterId = 'snake' | 'otacon' | 'meryl' | 'colonel';
+export type CodecCharacterId = 'snake' | 'otacon' | 'meryl' | 'colonel' | 'meiling';
 export type CodecExpression = 'idle' | 'stern' | 'angry' | 'surprised' | 'thinking' | 'hurt';
 export type CodecPortraitFamily = 'neutral' | 'alert';
 export type CodecPortraitRuntimeFrameSlot = 'idle' | 'talk1' | 'talk2';
@@ -52,7 +52,7 @@ export type Contact = {
   code: string;
   frequency: string;
   portraitTag: string;
-  characterId?: CodecCharacterId;
+  characterId: CodecCharacterId;
   greeting: string;
   ackStyle: string;
   signoff: string;

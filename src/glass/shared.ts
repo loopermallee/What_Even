@@ -1,11 +1,12 @@
 import { CONTACTS } from '../app/contacts';
 import { resolveCodecPortraitState } from '../app/codecPortraitState';
-import type { AppState, SpeakerSide, TranscriptEntry } from '../app/types';
+import type { AppState, CodecCharacterId, SpeakerSide, TranscriptEntry } from '../app/types';
 
-export type PortraitAssetBase = 'portrait-colonel' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
+export type PortraitAssetBase = 'portrait-colonel' | 'portrait-meiling' | 'portrait-meryl' | 'portrait-otacon' | 'portrait-snake';
 export type PortraitAsset =
   | PortraitAssetBase
   | 'portrait-colonel-alert'
+  | 'portrait-meiling-alert'
   | 'portrait-meryl-alert'
   | 'portrait-otacon-alert'
   | 'portrait-snake-alert';
@@ -207,9 +208,33 @@ export function getSelectedContact(state: AppState) {
   return CONTACTS[state.selectedContactIndex] ?? CONTACTS[0];
 }
 
+function getPortraitAssetForCharacterId(characterId: CodecCharacterId): PortraitAssetBase {
+  if (characterId === 'colonel') {
+    return 'portrait-colonel';
+  }
+
+  if (characterId === 'meiling') {
+    return 'portrait-meiling';
+  }
+
+  if (characterId === 'meryl') {
+    return 'portrait-meryl';
+  }
+
+  if (characterId === 'otacon') {
+    return 'portrait-otacon';
+  }
+
+  return 'portrait-snake';
+}
+
 export function getPortraitAssetForContactName(name: string): PortraitAssetBase {
   if (name === 'Colonel') {
     return 'portrait-colonel';
+  }
+
+  if (name === 'Mei Ling') {
+    return 'portrait-meiling';
   }
 
   if (name === 'Meryl') {
@@ -299,7 +324,7 @@ function getGlassPortraitBase(state: AppState, speakerSide: SpeakerSide | null) 
   }
 
   const contact = getSelectedContact(state);
-  return getPortraitAssetForContactName(contact.name);
+  return getPortraitAssetForCharacterId(contact.characterId);
 }
 
 export function resolveGlassPortraitState(state: AppState): GlassPortraitState {

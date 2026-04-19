@@ -7,7 +7,7 @@ import { renderTranscriptPanel } from './TranscriptPanel';
 export function renderCodecShell(state: AppState, options: {
   leftLabel: string;
   leftTag: string;
-  leftCharacterId?: 'snake' | 'otacon' | 'meryl' | 'colonel';
+  leftCharacterId?: 'snake' | 'otacon' | 'meryl' | 'colonel' | 'meiling';
   rightActive: boolean;
   leftActive: boolean;
   mouthOpen: boolean;

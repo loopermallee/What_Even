@@ -82,7 +82,7 @@ function drawFrame(
 }
 
 function parseCharacterId(value: string | undefined): CodecCharacterId | null {
-  if (value === 'snake' || value === 'otacon' || value === 'meryl' || value === 'colonel') {
+  if (value === 'snake' || value === 'otacon' || value === 'meryl' || value === 'colonel' || value === 'meiling') {
     return value;
   }
 

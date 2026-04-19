@@ -116,6 +116,32 @@ const SCRIPTED_SCENARIOS: ScriptedScenario[] = [
       { speaker: 'right', text: 'Through.', metadata: { cadence: 'brief' } },
     ],
   },
+  {
+    id: 'meiling-route-window',
+    title: 'Route Window',
+    contactCharacterId: 'meiling',
+    lines: [
+      { speaker: 'left', text: 'Snake, I have a clean route window for you now. The camera sweep is drifting off pattern.', emotion: 'thinking', metadata: { cadence: 'measured', transitionIntensity: 'low' } },
+      { speaker: 'right', text: 'How long does it hold?', metadata: { cadence: 'brief' } },
+      { speaker: 'left', text: 'Eighteen seconds if you move immediately. Stay tight to the left wall and do not break stride.', emotion: 'stern', metadata: { cadence: 'urgent' } },
+      { speaker: 'right', text: 'That is enough. Keep counting.', metadata: { cadence: 'brief' } },
+      { speaker: 'left', text: 'Three beats to the blind spot. One... two... now.', emotion: 'angry', metadata: { cadence: 'staccato', pauseAfterMs: 240, transitionIntensity: 'high' } },
+      { speaker: 'right', text: 'Crossing.', metadata: { cadence: 'brief' } },
+    ],
+  },
+  {
+    id: 'meiling-nav-correction',
+    title: 'Nav Correction',
+    contactCharacterId: 'meiling',
+    lines: [
+      { speaker: 'left', text: 'Snake, stop. Your current heading puts you under a returning patrol arc.', emotion: 'stern', metadata: { cadence: 'measured', transitionIntensity: 'medium' } },
+      { speaker: 'right', text: 'Correction?', metadata: { cadence: 'brief' } },
+      { speaker: 'left', text: 'Take the narrow service lane behind the relay cabinet. It is slower, but it keeps you outside their turn radius.', emotion: 'thinking', metadata: { cadence: 'measured' } },
+      { speaker: 'right', text: 'You are steering me into the dark again.', metadata: { cadence: 'brief', pauseAfterMs: 120 } },
+      { speaker: 'left', text: 'I am steering you around the spotlight. Two more steps and then angle right.', metadata: { cadence: 'urgent', transitionIntensity: 'medium' } },
+      { speaker: 'right', text: 'Understood. Adjusting now.', metadata: { cadence: 'brief' } },
+    ],
+  },
 ];
 
 export function getScriptedScenarios() {

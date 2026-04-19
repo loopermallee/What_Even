@@ -10,6 +10,8 @@ export type CodecAssetKey =
   | 'frame-ended'
   | 'portrait-colonel'
   | 'portrait-colonel-alert'
+  | 'portrait-meiling'
+  | 'portrait-meiling-alert'
   | 'portrait-meryl'
   | 'portrait-meryl-alert'
   | 'portrait-otacon'
@@ -79,6 +81,12 @@ function getPortraitAssetDefinition(key: CodecAssetKey): PortraitAssetDefinition
   }
   if (key === 'portrait-colonel-alert') {
     return { characterId: 'colonel', frameKey: 'colonel.alert.idle' };
+  }
+  if (key === 'portrait-meiling') {
+    return { characterId: 'meiling', frameKey: 'meiling.neutral.idle' };
+  }
+  if (key === 'portrait-meiling-alert') {
+    return { characterId: 'meiling', frameKey: 'meiling.alert.idle' };
   }
   if (key === 'portrait-meryl') {
     return { characterId: 'meryl', frameKey: 'meryl.neutral.idle' };
