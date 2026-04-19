@@ -1,6 +1,7 @@
 import type { EvenHubEvent } from '@evenrealities/even_hub_sdk';
 
 export type AudioCaptureStatus = 'idle' | 'opening' | 'listening' | 'closing' | 'error';
+export const DEBUG_STT_COUNTDOWN = false;
 
 type BridgeLike = {
   audioControl: (isOpen: boolean) => Promise<boolean>;
@@ -16,6 +17,7 @@ export type AudioCaptureMetrics = {
   audioFrameCount: number;
   audioBufferByteLength: number;
   bufferedAudioDurationMs: number;
+  elapsedCaptureDurationMs: number;
   lastAudioFrameAt: number;
   listeningActivityLevel: number;
 };
@@ -93,6 +95,7 @@ export class AudioCaptureController {
   private totalBufferedDurationMs = 0;
   private totalBufferedBytes = 0;
   private lastAudioFrameAt: number | null = null;
+  private captureStartedAt: number | null = null;
   private micOpen = false;
   private operationChain: Promise<MicOperationResult> = Promise.resolve({
     ok: true,
@@ -114,6 +117,15 @@ export class AudioCaptureController {
     this.totalBufferedDurationMs = 0;
     this.totalBufferedBytes = 0;
     this.lastAudioFrameAt = null;
+  }
+
+  startCaptureSession(startedAt = Date.now()) {
+    if (this.captureStartedAt === startedAt) {
+      return;
+    }
+
+    this.clearBuffer();
+    this.captureStartedAt = startedAt;
   }
 
   requestMicOpen(bridge: BridgeLike) {
@@ -172,6 +184,7 @@ export class AudioCaptureController {
     const metadataDurationMs = readDurationMsFromEventJson(event);
     const fallbackDurationMs = this.lastAudioFrameAt !== null ? Math.max(1, now - this.lastAudioFrameAt) : 1;
     const durationMs = metadataDurationMs ?? fallbackDurationMs;
+    const totalBufferedDurationBeforeTrim = this.totalBufferedDurationMs + durationMs;
 
     this.lastAudioFrameAt = now;
     this.chunks.push({
@@ -201,10 +214,26 @@ export class AudioCaptureController {
       this.totalBufferedDurationMs = 0;
     }
 
+    const elapsedCaptureDurationMs = this.captureStartedAt === null
+      ? 0
+      : Math.max(0, now - this.captureStartedAt);
+
+    if (DEBUG_STT_COUNTDOWN) {
+      console.debug('[stt-countdown:audio]', {
+        metadataDurationMs,
+        fallbackDurationMs,
+        durationMs,
+        totalBufferedDurationMsBeforeTrim: Math.round(totalBufferedDurationBeforeTrim),
+        totalBufferedDurationMsAfterTrim: Math.round(this.totalBufferedDurationMs),
+        elapsedCaptureDurationMs,
+      });
+    }
+
     return {
       audioFrameCount: this.chunks.length,
       audioBufferByteLength: this.totalBufferedBytes,
       bufferedAudioDurationMs: Math.round(this.totalBufferedDurationMs),
+      elapsedCaptureDurationMs: Math.round(elapsedCaptureDurationMs),
       lastAudioFrameAt: now,
       listeningActivityLevel: getActivityLevel(pcm),
     } satisfies AudioCaptureMetrics;

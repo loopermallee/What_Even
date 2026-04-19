@@ -62,13 +62,15 @@ function writeDevicePageLifecycleState(value: DevicePageLifecycleState) {
   }
 }
 
-function createInitialAudioCaptureState() {
+function createInitialAudioCaptureState(captureSessionStartedAt: number | null = null) {
   return {
     audioCaptureStatus: 'idle' as AudioCaptureStatus,
     micOpen: false,
     audioFrameCount: 0,
     audioBufferByteLength: 0,
     bufferedAudioDurationMs: 0,
+    elapsedCaptureDurationMs: 0,
+    captureSessionStartedAt,
     lastAudioFrameAt: null as number | null,
     listeningActivityLevel: 0,
     audioError: null as string | null,
@@ -635,6 +637,7 @@ export class AppStore {
 
   enterListeningTurn() {
     const listeningSessionId = this.state.listeningSessionId + 1;
+    const captureSessionStartedAt = Date.now();
     this.patch({
       screen: 'listening',
       ...createInitialListeningState(),
@@ -642,7 +645,7 @@ export class AppStore {
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
-      ...createInitialAudioCaptureState(),
+      ...createInitialAudioCaptureState(captureSessionStartedAt),
       ...createInitialSttState(listeningSessionId),
     });
   }
@@ -858,6 +861,7 @@ export class AppStore {
       ? this.state.transcript.filter((_, index) => index !== newestUnhandledIndex)
       : this.state.transcript;
     const listeningSessionId = this.state.listeningSessionId + 1;
+    const captureSessionStartedAt = Date.now();
 
     this.patch({
       screen: 'listening',
@@ -869,7 +873,7 @@ export class AppStore {
       turnState: 'idle',
       responseError: null,
       responseStatusTimestamp: Date.now(),
-      ...createInitialAudioCaptureState(),
+      ...createInitialAudioCaptureState(captureSessionStartedAt),
       ...createInitialSttState(listeningSessionId),
     });
   }
@@ -913,6 +917,7 @@ export class AppStore {
     audioFrameCount: number;
     audioBufferByteLength: number;
     bufferedAudioDurationMs: number;
+    elapsedCaptureDurationMs: number;
     lastAudioFrameAt: number;
     listeningActivityLevel: number;
   }) {
@@ -920,6 +925,7 @@ export class AppStore {
       this.state.audioFrameCount === update.audioFrameCount &&
       this.state.audioBufferByteLength === update.audioBufferByteLength &&
       this.state.bufferedAudioDurationMs === update.bufferedAudioDurationMs &&
+      this.state.elapsedCaptureDurationMs === update.elapsedCaptureDurationMs &&
       this.state.lastAudioFrameAt === update.lastAudioFrameAt &&
       this.state.listeningActivityLevel === update.listeningActivityLevel
     ) {
@@ -930,6 +936,7 @@ export class AppStore {
       audioFrameCount: update.audioFrameCount,
       audioBufferByteLength: update.audioBufferByteLength,
       bufferedAudioDurationMs: update.bufferedAudioDurationMs,
+      elapsedCaptureDurationMs: update.elapsedCaptureDurationMs,
       lastAudioFrameAt: update.lastAudioFrameAt,
       listeningActivityLevel: update.listeningActivityLevel,
     });

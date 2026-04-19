@@ -180,6 +180,8 @@ export type AppState = {
   audioFrameCount: number;
   audioBufferByteLength: number;
   bufferedAudioDurationMs: number;
+  elapsedCaptureDurationMs: number;
+  captureSessionStartedAt: number | null;
   lastAudioFrameAt: number | null;
   listeningActivityLevel: number;
   audioError: string | null;

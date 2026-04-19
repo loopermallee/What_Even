@@ -1,4 +1,5 @@
 import type { AppState, TranscriptEntry } from '../../app/types';
+import { DEBUG_STT_COUNTDOWN } from '../../bridge/audio';
 import {
   formatGlassSpeakerLine,
   getLatestTranscriptEntryByRole,
@@ -8,14 +9,48 @@ import {
 } from '../shared';
 
 const MAX_CAPTURE_DURATION_MS = 10_000;
+let lastCountdownSessionStartedAt: number | null = null;
+let lastCountdownRemainingMs: number | null = null;
 
-function formatCaptureCountdown(bufferedAudioDurationMs: number) {
-  const remainingMs = Math.max(0, MAX_CAPTURE_DURATION_MS - bufferedAudioDurationMs);
+function getMonotonicRemainingMs(state: AppState) {
+  const rawRemainingMs = Math.max(0, MAX_CAPTURE_DURATION_MS - state.elapsedCaptureDurationMs);
+  const sessionStartedAt = state.captureSessionStartedAt;
+
+  if (sessionStartedAt === null) {
+    lastCountdownSessionStartedAt = null;
+    lastCountdownRemainingMs = null;
+    return rawRemainingMs;
+  }
+
+  if (lastCountdownSessionStartedAt !== sessionStartedAt) {
+    lastCountdownSessionStartedAt = sessionStartedAt;
+    lastCountdownRemainingMs = rawRemainingMs;
+    return rawRemainingMs;
+  }
+
+  const guardedRemainingMs = lastCountdownRemainingMs === null
+    ? rawRemainingMs
+    : Math.min(rawRemainingMs, lastCountdownRemainingMs);
+  lastCountdownRemainingMs = guardedRemainingMs;
+  return guardedRemainingMs;
+}
+
+function formatCaptureCountdown(state: AppState) {
+  const remainingMs = getMonotonicRemainingMs(state);
+  if (DEBUG_STT_COUNTDOWN && remainingMs <= 1000 && state.captureSessionStartedAt !== null) {
+    console.debug('[stt-countdown:render]', {
+      listeningSessionId: state.listeningSessionId,
+      captureSessionStartedAt: state.captureSessionStartedAt,
+      elapsedCaptureDurationMs: state.elapsedCaptureDurationMs,
+      remainingMs,
+    });
+  }
+
   return `${(remainingMs / 1000).toFixed(1)}s left`;
 }
 
 function buildCaptureDialogue(state: AppState, visibleDraft: string) {
-  const countdownLine = formatCaptureCountdown(state.bufferedAudioDurationMs);
+  const countdownLine = formatCaptureCountdown(state);
   const transcriptLines = visibleDraft
     ? wrapTextLines(visibleDraft, 27)
     : [];

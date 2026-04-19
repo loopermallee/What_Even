@@ -8,7 +8,7 @@ import { AppGlasses } from '../glass/AppGlasses';
 import { EvenInputNormalizer } from './eventNormalizer';
 import { SerializedImageQueue } from './imageQueue';
 import { StartupLifecycleManager } from './startupLifecycle';
-import { AudioCaptureController } from './audio';
+import { AudioCaptureController, DEBUG_STT_COUNTDOWN } from './audio';
 import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
 import { createAppError, isAppError, redactSensitiveText, toErrorMessage, type AppError } from '../app/errors';
 import type { ErrorCategory, EvenStartupBlockedCode, NormalizedInput, RawEventDebugInfo } from '../app/types';
@@ -170,6 +170,7 @@ export class EvenBridgeApp {
   private readonly sttPartialFlushMs = 70;
   private readonly staleLogCooldownMs = 800;
   private readonly outboundAdvanceDelayMs = 1100;
+  private readonly maxCaptureDurationMs = 10_000;
   private readonly simulatorUnknownTapSuppressMs = 150;
   private readonly deviceInfoRetryDelayMs = 250;
   private readonly deviceInfoRetryAttempts = 4;
@@ -846,6 +847,7 @@ export class EvenBridgeApp {
     const state = this.store.getState();
     const shouldBeOpen = state.started && state.screen === 'listening' && state.listeningMode === 'capture';
     if (shouldBeOpen) {
+      this.audioCapture.startCaptureSession(state.captureSessionStartedAt ?? Date.now());
       if (!this.audioCapture.isMicOpen() && state.audioCaptureStatus !== 'opening') {
         this.pendingCleanupReason = null;
         this.store.setAudioCaptureStatus('opening', { micOpen: false, error: null });
@@ -1041,6 +1043,24 @@ export class EvenBridgeApp {
     }
 
     try {
+      const state = this.store.getState();
+      if (
+        DEBUG_STT_COUNTDOWN &&
+        state.screen === 'listening' &&
+        state.listeningMode === 'capture' &&
+        state.captureSessionStartedAt !== null
+      ) {
+        const remainingMs = Math.max(0, this.maxCaptureDurationMs - state.elapsedCaptureDurationMs);
+        if (remainingMs <= 1000) {
+          console.debug('[stt-countdown:sync]', {
+            listeningSessionId: state.listeningSessionId,
+            captureSessionStartedAt: state.captureSessionStartedAt,
+            elapsedCaptureDurationMs: state.elapsedCaptureDurationMs,
+            remainingMs,
+          });
+        }
+      }
+
       const text = this.glasses.getDialogueText();
       if (text === this.lastSyncedTextContent) {
         return;
@@ -1196,7 +1216,7 @@ export class EvenBridgeApp {
       sttDraftVisible: draftGraceActive,
       sttDraftBucket: draftGraceActive ? state.sttDraftDisplayText.slice(0, 64) : null,
       sttError: state.sttError,
-      audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 100),
+      elapsedCaptureDurationBucket: Math.floor(state.elapsedCaptureDurationMs / 100),
       activityBucket: Math.floor(state.listeningActivityLevel * 10),
       frameAtBucket: state.lastAudioFrameAt ? Math.floor(state.lastAudioFrameAt / 1000) : null,
       lastNormalizedInput: state.lastNormalizedInput,

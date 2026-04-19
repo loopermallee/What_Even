@@ -33,7 +33,7 @@ function getBridgeSyncSignature(state: AppState) {
     sttPartialBucket: state.sttPartialTranscript ? state.sttPartialTranscript.slice(0, 64) : null,
     sttError: state.sttError,
     micOpen: state.micOpen,
-    audioDurationBucket: Math.floor(state.bufferedAudioDurationMs / 500),
+    elapsedCaptureDurationBucket: Math.floor(state.elapsedCaptureDurationMs / 100),
     audioActivityBucket: Math.floor(state.listeningActivityLevel * 10),
     audioFrameAtBucket: state.lastAudioFrameAt ? Math.floor(state.lastAudioFrameAt / 1000) : null,
     lastNormalizedInput: state.lastNormalizedInput,
