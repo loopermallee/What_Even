@@ -1,5 +1,6 @@
 import { createAppError } from '../../errors';
 import { requestGeminiBrokerResponse } from '../geminiBroker';
+import { getCharacterContract } from '../characterContracts';
 import type { GeminiGenerateRequestBody } from '../geminiContract';
 import type { ResponseGenerationRequest, ResponseProvider } from './base';
 import {
@@ -47,11 +48,13 @@ export class GeminiResponseProvider implements ResponseProvider {
     callbacks: Parameters<ResponseProvider['generate']>[1],
     signal: AbortSignal,
   ) {
+    const contract = getCharacterContract(request.contact);
     const speaker = request.contact.name.toUpperCase();
     const emitPartial = (text: string) => {
       const normalized = normalizeContactReplyText(text, {
         speaker,
         signoff: request.contact.signoff,
+        contract,
       });
       if (!normalized) {
         return;
@@ -85,6 +88,7 @@ export class GeminiResponseProvider implements ResponseProvider {
     const finalText = normalizeContactReplyText(result.text, {
       speaker,
       signoff: request.contact.signoff,
+      contract,
     });
     if (!finalText) {
       throw createAppError({

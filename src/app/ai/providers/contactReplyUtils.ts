@@ -1,3 +1,4 @@
+import { applyCharacterResponseCap, buildCharacterSystemPrompt, type CharacterContract } from '../characterContracts';
 import type { Contact, TranscriptEntry } from '../../types';
 
 function collapseWhitespace(text: string) {
@@ -53,15 +54,7 @@ export function buildHistoryContext(transcript: TranscriptEntry[], currentUserTu
 }
 
 export function buildContactInstruction(contact: Contact) {
-  return [
-    `You are ${contact.name}, a secure codec contact on frequency ${contact.frequency}.`,
-    `Match this acknowledgement style when natural: ${contact.ackStyle}`,
-    'Keep the reply concise, tactical, and easy to read at a glance.',
-    'Use 1 to 3 short sentences.',
-    'Do not include markdown, bullet points, quotes, speaker labels, or stage directions.',
-    'Do not include the system signoff; it is added separately by the app.',
-    'Stay under 220 characters when possible.',
-  ].join(' ');
+  return buildCharacterSystemPrompt(contact);
 }
 
 export function buildContactUserPrompt(options: {
@@ -78,7 +71,11 @@ export function buildContactUserPrompt(options: {
   ].join('\n\n');
 }
 
-export function normalizeContactReplyText(text: string, options: { speaker: string; signoff: string }) {
+export function normalizeContactReplyText(text: string, options: {
+  speaker: string;
+  signoff: string;
+  contract: CharacterContract;
+}) {
   let normalized = collapseWhitespace(text)
     .replace(/^["'`]+/, '')
     .replace(/["'`]+$/, '');
@@ -89,7 +86,8 @@ export function normalizeContactReplyText(text: string, options: { speaker: stri
     normalized = normalized.replace(signoffPattern, '');
   }
 
-  return collapseWhitespace(normalized);
+  normalized = collapseWhitespace(normalized);
+  return applyCharacterResponseCap(normalized, options.contract);
 }
 
 export async function simulateProgressiveDelivery(

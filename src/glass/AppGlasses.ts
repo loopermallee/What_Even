@@ -214,9 +214,16 @@ export class AppGlasses {
 
     if (inspection.currentSelectItemName !== null) {
       const visibleItems = this.getActionItems();
+      const normalizeListLabel = (value: string) => value.replace(/^[>\s]+/, '').trim();
       const matchingIndex = visibleItems.findIndex((item) => item === inspection.currentSelectItemName);
       if (matchingIndex >= 0) {
         return matchingIndex;
+      }
+
+      const normalizedName = normalizeListLabel(inspection.currentSelectItemName);
+      const normalizedMatchIndex = visibleItems.findIndex((item) => normalizeListLabel(item) === normalizedName);
+      if (normalizedMatchIndex >= 0) {
+        return normalizedMatchIndex;
       }
     }
 
@@ -376,6 +383,28 @@ export class AppGlasses {
   private buildStatusListContainer() {
     const view = this.getView();
     const actions = this.getActionItems();
+    if (this.store.getState().screen === 'contacts') {
+      return {
+        xPosition: 84,
+        yPosition: 93,
+        width: 408,
+        height: 96,
+        borderWidth: 0,
+        borderColor: 0,
+        borderRadius: 0,
+        paddingLength: 0,
+        containerID: GLASSES_CONTAINERS.statusList.id,
+        containerName: GLASSES_CONTAINERS.statusList.name,
+        itemContainer: {
+          itemCount: actions.length,
+          itemName: actions,
+          itemWidth: 0,
+          isItemSelectBorderEn: 0,
+        },
+        isEventCapture: 1,
+      };
+    }
+
     return {
       xPosition: view.showPortrait ? 132 : 24,
       yPosition: view.showPortrait ? 182 : 196,

@@ -1,12 +1,27 @@
 import { ResponseOrchestrator } from './app/ai/responseOrchestrator';
 import { DeterministicResponseProvider } from './app/ai/providers/deterministic';
 import { GeminiResponseProvider } from './app/ai/providers/gemini';
+import { OpenAIResponseProvider } from './app/ai/providers/openai';
 import './style.css';
 import { AppStore } from './app/state';
 import { EvenBridgeApp } from './bridge/evenBridge';
 import { AppGlasses } from './glass/AppGlasses';
 import { AppWeb } from './web/AppWeb';
 import type { AppState } from './app/types';
+
+function parseFirstVisibleBudget(value: unknown, fallbackMs: number) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return fallbackMs;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMs;
+  }
+
+  return parsed;
+}
 
 function getBridgeSyncSignature(state: AppState) {
   return JSON.stringify({
@@ -50,8 +65,23 @@ function getBridgeSyncSignature(state: AppState) {
 
 const store = new AppStore();
 const responseOrchestrator = new ResponseOrchestrator(store, {
-  primaryProvider: new GeminiResponseProvider(),
-  fallbackProvider: new DeterministicResponseProvider(),
+  providers: [
+    {
+      name: 'gemini',
+      provider: new GeminiResponseProvider(),
+      firstVisibleTimeoutMs: parseFirstVisibleBudget(import.meta.env.VITE_GEMINI_FIRST_VISIBLE_TIMEOUT_MS, 1200),
+    },
+    {
+      name: 'openai',
+      provider: new OpenAIResponseProvider(),
+      firstVisibleTimeoutMs: parseFirstVisibleBudget(import.meta.env.VITE_OPENAI_FIRST_VISIBLE_TIMEOUT_MS, 1200),
+    },
+    {
+      name: 'deterministic',
+      provider: new DeterministicResponseProvider(),
+      firstVisibleTimeoutMs: null,
+    },
+  ],
 });
 const glassesApp = new AppGlasses(store);
 const bridgeApp = new EvenBridgeApp(store, glassesApp);

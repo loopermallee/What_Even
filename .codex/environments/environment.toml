@@ -6,7 +6,7 @@ name = "What_Even"
 script = ""
 
 [[actions]]
-name = "Website"
+name = "1) Website"
 icon = "run"
 command = '''
 cd /Users/asrulsashedesilva/What_Even
@@ -14,7 +14,7 @@ npm run dev -- --host 0.0.0.0 --port 5173
 '''
 
 [[actions]]
-name = "Simulator"
+name = "2) Simulator"
 icon = "run"
 command = '''
 cd /Users/asrulsashedesilva/What_Even
@@ -22,7 +22,7 @@ node node_modules/@evenrealities/evenhub-simulator/bin/index.js --glow http://lo
 '''
 
 [[actions]]
-name = "QR"
+name = "3) QR"
 icon = "run"
 command = '''
 cd /Users/asrulsashedesilva/What_Even
@@ -30,7 +30,7 @@ npx evenhub qr --http --port 5173
 '''
 
 [[actions]]
-name = "STT broker"
+name = "4) STT broker"
 icon = "run"
 command = '''
 cd /Users/asrulsashedesilva/What_Even

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const DEEPGRAM_AUTH_URL = 'https://api.deepgram.com/v1/auth/grant';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+const DEFAULT_OPENAI_MODEL = 'gpt-5-mini';
 
 function stripWrappingQuotes(value) {
   if (
@@ -111,6 +112,7 @@ function logEvent(event, details = {}) {
 const config = (() => {
   const sttErrors = [];
   const geminiErrors = [];
+  const openaiErrors = [];
 
   const deepgramApiKey = parseRequiredEnv('DEEPGRAM_API_KEY');
   if (!deepgramApiKey) {
@@ -122,6 +124,11 @@ const config = (() => {
     geminiErrors.push('missing_gemini_api_key');
   }
 
+  const openaiApiKey = parseRequiredEnv('OPENAI_API_KEY');
+  if (!openaiApiKey) {
+    openaiErrors.push('missing_openai_api_key');
+  }
+
   let port = 8787;
   let sttTimeoutMs = 5000;
   let sttRateLimitWindowMs = 60_000;
@@ -131,6 +138,10 @@ const config = (() => {
   let geminiRateLimitWindowMs = 60_000;
   let geminiRateLimitMax = 20;
   let geminiModel = parseRequiredEnv('GEMINI_MODEL') ?? DEFAULT_GEMINI_MODEL;
+  let openaiTimeoutMs = 15_000;
+  let openaiRateLimitWindowMs = 60_000;
+  let openaiRateLimitMax = 20;
+  let openaiModel = parseRequiredEnv('OPENAI_MODEL') ?? DEFAULT_OPENAI_MODEL;
 
   try {
     port = parsePositiveIntEnv('STT_BROKER_PORT', 8787);
@@ -141,19 +152,25 @@ const config = (() => {
     geminiTimeoutMs = parsePositiveIntEnv('GEMINI_BROKER_TIMEOUT_MS', 12_000);
     geminiRateLimitWindowMs = parsePositiveIntEnv('GEMINI_BROKER_RATE_LIMIT_WINDOW_MS', 60_000);
     geminiRateLimitMax = parsePositiveIntEnv('GEMINI_BROKER_RATE_LIMIT_MAX', 20);
+    openaiTimeoutMs = parsePositiveIntEnv('OPENAI_BROKER_TIMEOUT_MS', 15_000);
+    openaiRateLimitWindowMs = parsePositiveIntEnv('OPENAI_BROKER_RATE_LIMIT_WINDOW_MS', 60_000);
+    openaiRateLimitMax = parsePositiveIntEnv('OPENAI_BROKER_RATE_LIMIT_MAX', 20);
   } catch (error) {
     const sanitized = sanitize(error);
     sttErrors.push(sanitized);
     geminiErrors.push(sanitized);
+    openaiErrors.push(sanitized);
   }
 
   geminiModel = geminiModel.trim() || DEFAULT_GEMINI_MODEL;
+  openaiModel = openaiModel.trim() || DEFAULT_OPENAI_MODEL;
 
   return {
     port,
     corsAllowlist: mergeAllowlists(
       parseCorsAllowlist(process.env.STT_BROKER_CORS_ALLOWLIST),
       parseCorsAllowlist(process.env.GEMINI_BROKER_CORS_ALLOWLIST),
+      parseCorsAllowlist(process.env.OPENAI_BROKER_CORS_ALLOWLIST),
     ),
     stt: {
       deepgramApiKey,
@@ -171,11 +188,20 @@ const config = (() => {
       model: geminiModel,
       configErrors: geminiErrors,
     },
+    openai: {
+      openaiApiKey,
+      timeoutMs: openaiTimeoutMs,
+      rateLimitWindowMs: openaiRateLimitWindowMs,
+      rateLimitMax: openaiRateLimitMax,
+      model: openaiModel,
+      configErrors: openaiErrors,
+    },
   };
 })();
 
 const sttRateLimiterState = new Map();
 const geminiRateLimiterState = new Map();
+const openaiRateLimiterState = new Map();
 
 function nowMs() {
   return Date.now();
@@ -527,6 +553,264 @@ function parseGeminiBrokerRequest(payload) {
   return {
     jobId,
     request,
+  };
+}
+
+function parseOpenAIBrokerRequest(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const jobId = Number(payload.jobId);
+  const request = payload.request;
+  if (!Number.isFinite(jobId) || !request || typeof request !== 'object') {
+    return null;
+  }
+
+  if (!Array.isArray(request.input) || request.input.length === 0) {
+    return null;
+  }
+
+  return {
+    jobId,
+    request,
+  };
+}
+
+function extractOpenAIContentText(value) {
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  if (typeof value.text === 'string' && value.text.trim()) {
+    return value.text.trim();
+  }
+
+  if (typeof value.output_text === 'string' && value.output_text.trim()) {
+    return value.output_text.trim();
+  }
+
+  if (typeof value.delta === 'string' && value.delta.trim()) {
+    return value.delta;
+  }
+
+  return '';
+}
+
+function extractOpenAIText(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  if (Array.isArray(payload.output_text)) {
+    const text = payload.output_text
+      .map((part) => extractOpenAIContentText(part))
+      .join('');
+    if (text.trim()) {
+      return text.trim();
+    }
+  }
+
+  if (Array.isArray(payload.output)) {
+    const text = payload.output
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return '';
+        }
+
+        if (Array.isArray(item.content)) {
+          return item.content.map((contentPart) => extractOpenAIContentText(contentPart)).join('');
+        }
+
+        return extractOpenAIContentText(item);
+      })
+      .join('');
+    if (text.trim()) {
+      return text.trim();
+    }
+  }
+
+  if (Array.isArray(payload.content)) {
+    const text = payload.content
+      .map((part) => extractOpenAIContentText(part))
+      .join('');
+    if (text.trim()) {
+      return text.trim();
+    }
+  }
+
+  if (payload.response) {
+    return extractOpenAIText(payload.response);
+  }
+
+  if (typeof payload.text === 'string' && payload.text.trim()) {
+    return payload.text.trim();
+  }
+
+  return '';
+}
+
+function extractOpenAIDelta(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  if (typeof payload.delta === 'string' && payload.delta) {
+    return payload.delta;
+  }
+
+  if (typeof payload.text === 'string' && payload.text) {
+    return payload.text;
+  }
+
+  if (!Array.isArray(payload.content)) {
+    return '';
+  }
+
+  return payload.content
+    .map((part) => {
+      if (!part || typeof part !== 'object') {
+        return '';
+      }
+
+      if (typeof part.delta === 'string' && part.delta) {
+        return part.delta;
+      }
+
+      return typeof part.text === 'string' ? part.text : '';
+    })
+    .join('');
+}
+
+function extractOpenAIErrorMessage(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const directMessage = String(payload.message ?? '').trim();
+  if (directMessage) {
+    return directMessage;
+  }
+
+  if (payload.error && typeof payload.error === 'object') {
+    const errorMessage = String(payload.error.message ?? '').trim();
+    if (errorMessage) {
+      return errorMessage;
+    }
+  }
+
+  if (payload.response && typeof payload.response === 'object') {
+    const incompleteDetails = payload.response.incomplete_details;
+    if (incompleteDetails && typeof incompleteDetails === 'object') {
+      const detailsMessage = String(incompleteDetails.reason ?? '').trim();
+      if (detailsMessage) {
+        return detailsMessage;
+      }
+    }
+
+    const responseError = payload.response.error;
+    if (responseError && typeof responseError === 'object') {
+      const responseErrorMessage = String(responseError.message ?? '').trim();
+      if (responseErrorMessage) {
+        return responseErrorMessage;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getOpenAIEventType(parsedEvent, payload) {
+  if (parsedEvent && parsedEvent !== 'message') {
+    return parsedEvent;
+  }
+
+  return String(payload?.type ?? '').trim() || 'message';
+}
+
+function mapOpenAIUpstreamFailure(status, detail) {
+  if (status === 401 || status === 403) {
+    return {
+      status: 502,
+      category: 'auth_error',
+      code: 'openai_auth_failed',
+      message: 'OpenAI upstream rejected request.',
+    };
+  }
+
+  if (status === 429) {
+    return {
+      status: 503,
+      category: 'network_error',
+      code: 'openai_rate_limited',
+      message: 'OpenAI upstream is rate limited.',
+    };
+  }
+
+  if (status >= 500) {
+    return {
+      status: 502,
+      category: 'network_error',
+      code: 'openai_upstream_failed',
+      message: 'OpenAI upstream request failed.',
+    };
+  }
+
+  return {
+    status: 400,
+    category: 'state_error',
+    code: 'openai_request_rejected',
+    message: detail || 'OpenAI request was rejected.',
+  };
+}
+
+function toOpenAIStreamError(error, requestAborted, upstreamAborted) {
+  if (requestAborted) {
+    return {
+      category: 'network_error',
+      code: 'client_disconnected',
+      message: 'Client disconnected before OpenAI finished responding.',
+    };
+  }
+
+  if (upstreamAborted) {
+    return {
+      category: 'network_error',
+      code: 'openai_timeout',
+      message: 'OpenAI upstream timed out.',
+    };
+  }
+
+  if (
+    error
+    && typeof error === 'object'
+    && 'category' in error
+    && 'code' in error
+    && 'userMessage' in error
+  ) {
+    return {
+      category: String(error.category),
+      code: String(error.code),
+      message: String(error.userMessage),
+    };
+  }
+
+  if (error instanceof Error && error.message) {
+    return {
+      category: 'network_error',
+      code: 'openai_stream_failed',
+      message: error.message,
+    };
+  }
+
+  return {
+    category: 'network_error',
+    code: 'openai_stream_failed',
+    message: 'OpenAI stream failed.',
   };
 }
 
@@ -919,6 +1203,291 @@ async function handleGeminiRespond(req, res, origin) {
   }
 }
 
+async function handleOpenAIRespond(req, res, origin) {
+  if (origin && !isCorsAllowed(req, origin)) {
+    sendError(req, res, 403, 'auth_error', 'cors_forbidden_origin', 'Origin is not allowed.');
+    return;
+  }
+
+  if (req.method === 'OPTIONS') {
+    applyCorsHeaders(req, res, origin);
+    res.statusCode = 204;
+    res.setHeader('Cache-Control', 'no-store');
+    res.end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    sendError(req, res, 405, 'state_error', 'method_not_allowed', 'Method not allowed.');
+    return;
+  }
+
+  if (config.openai.configErrors.length > 0 || !config.openai.openaiApiKey) {
+    sendError(req, res, 503, 'config_error', 'openai_broker_invalid_config', 'OpenAI broker configuration is invalid.');
+    return;
+  }
+
+  if (hitRateLimit(req, openaiRateLimiterState, config.openai.rateLimitWindowMs, config.openai.rateLimitMax)) {
+    logEvent('rate_limited', { ip: getClientIp(req), route: 'openai' });
+    sendError(req, res, 429, 'auth_error', 'rate_limited', 'Rate limit exceeded.');
+    return;
+  }
+
+  const payload = await readJsonBody(req).catch(() => null);
+  const brokerRequest = parseOpenAIBrokerRequest(payload);
+  if (!brokerRequest) {
+    sendError(req, res, 400, 'state_error', 'invalid_payload', 'OpenAI request payload is invalid.');
+    return;
+  }
+
+  logEvent('openai_request_started', {
+    ip: getClientIp(req),
+    jobId: brokerRequest.jobId,
+    model: config.openai.model,
+  });
+
+  const upstreamController = new AbortController();
+  const abortUpstream = () => {
+    upstreamController.abort();
+  };
+  const timeout = setTimeout(abortUpstream, config.openai.timeoutMs);
+  req.on('close', abortUpstream);
+
+  let upstreamResponse;
+  try {
+    upstreamResponse = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.openai.openaiApiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream, application/json',
+      },
+      body: JSON.stringify({
+        ...brokerRequest.request,
+        model: config.openai.model,
+        stream: true,
+      }),
+      signal: upstreamController.signal,
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    req.off('close', abortUpstream);
+
+    if (req.destroyed || res.destroyed) {
+      return;
+    }
+
+    if (upstreamController.signal.aborted) {
+      sendError(req, res, 504, 'network_error', 'openai_timeout', 'OpenAI upstream timed out.');
+      return;
+    }
+
+    logEvent('openai_request_network_error', {
+      ip: getClientIp(req),
+      jobId: brokerRequest.jobId,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    sendError(req, res, 502, 'network_error', 'openai_network_error', 'OpenAI upstream request failed.');
+    return;
+  }
+
+  if (!upstreamResponse.ok) {
+    clearTimeout(timeout);
+    req.off('close', abortUpstream);
+
+    const errorPayload = await parseJsonSafe(upstreamResponse);
+    const upstreamDetail = extractOpenAIErrorMessage(errorPayload);
+    const mapped = mapOpenAIUpstreamFailure(upstreamResponse.status, upstreamDetail);
+    logEvent('openai_request_rejected', {
+      ip: getClientIp(req),
+      jobId: brokerRequest.jobId,
+      upstreamStatus: upstreamResponse.status,
+    });
+    sendError(req, res, mapped.status, mapped.category, mapped.code, mapped.message);
+    return;
+  }
+
+  const contentType = String(upstreamResponse.headers.get('content-type') ?? '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    clearTimeout(timeout);
+    req.off('close', abortUpstream);
+
+    const successPayload = await parseJsonSafe(upstreamResponse);
+    const text = extractOpenAIText(successPayload);
+    if (!text) {
+      sendError(req, res, 502, 'state_error', 'openai_empty_response', 'OpenAI returned an empty response.');
+      return;
+    }
+
+    logEvent('openai_request_buffered_success', {
+      ip: getClientIp(req),
+      jobId: brokerRequest.jobId,
+      model: config.openai.model,
+    });
+    sendJson(req, res, 200, {
+      ok: true,
+      provider: 'openai',
+      deliveryMode: 'buffered_final',
+      model: config.openai.model,
+      text,
+    });
+    return;
+  }
+
+  if (!contentType.includes('text/event-stream') || !upstreamResponse.body) {
+    clearTimeout(timeout);
+    req.off('close', abortUpstream);
+    sendError(req, res, 502, 'network_error', 'openai_invalid_content_type', 'OpenAI upstream returned an unexpected response.');
+    return;
+  }
+
+  applyCorsHeaders(req, res, origin);
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const upstreamReader = upstreamResponse.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let assembledText = '';
+
+  sendSseEvent(res, 'status', {
+    provider: 'openai',
+    deliveryMode: 'native_stream',
+    model: config.openai.model,
+    phase: 'receiving',
+  });
+
+  try {
+    while (true) {
+      const { done, value } = await upstreamReader.read();
+      if (done) {
+        break;
+      }
+
+      if (req.destroyed || res.destroyed) {
+        upstreamController.abort();
+        return;
+      }
+
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let boundaryIndex = buffer.indexOf('\n\n');
+      while (boundaryIndex >= 0) {
+        const block = buffer.slice(0, boundaryIndex);
+        buffer = buffer.slice(boundaryIndex + 2);
+        boundaryIndex = buffer.indexOf('\n\n');
+
+        const parsed = parseSseBlock(block);
+        if (!parsed || !parsed.data || parsed.data === '[DONE]') {
+          continue;
+        }
+
+        let eventPayload;
+        try {
+          eventPayload = JSON.parse(parsed.data);
+        } catch {
+          continue;
+        }
+
+        const eventType = getOpenAIEventType(parsed.event, eventPayload);
+        if (eventType === 'error' || eventType === 'response.failed' || eventType === 'response.incomplete') {
+          throw {
+            category: 'network_error',
+            code: 'openai_stream_error',
+            userMessage: extractOpenAIErrorMessage(eventPayload) || 'OpenAI stream failed.',
+          };
+        }
+
+        let nextText = '';
+        if (eventType === 'response.output_text.delta') {
+          nextText = extractOpenAIDelta(eventPayload);
+        } else if (
+          eventType === 'response.output_text.done'
+          || eventType === 'response.output_item.done'
+          || eventType === 'response.completed'
+        ) {
+          nextText = extractOpenAIText(eventPayload);
+        }
+
+        const mergedText = mergeStreamText(assembledText, nextText);
+        if (mergedText.length > assembledText.length) {
+          assembledText = mergedText;
+          sendSseEvent(res, 'partial', {
+            provider: 'openai',
+            deliveryMode: 'native_stream',
+            model: config.openai.model,
+            text: assembledText,
+          });
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const parsed = parseSseBlock(buffer);
+      if (parsed?.data && parsed.data !== '[DONE]') {
+        const payload = JSON.parse(parsed.data);
+        const eventType = getOpenAIEventType(parsed.event, payload);
+        if (eventType === 'error' || eventType === 'response.failed' || eventType === 'response.incomplete') {
+          throw {
+            category: 'network_error',
+            code: 'openai_stream_error',
+            userMessage: extractOpenAIErrorMessage(payload) || 'OpenAI stream failed.',
+          };
+        }
+
+        const nextText = eventType === 'response.output_text.delta'
+          ? extractOpenAIDelta(payload)
+          : extractOpenAIText(payload);
+        const mergedText = mergeStreamText(assembledText, nextText);
+        if (mergedText.length > assembledText.length) {
+          assembledText = mergedText;
+          sendSseEvent(res, 'partial', {
+            provider: 'openai',
+            deliveryMode: 'native_stream',
+            model: config.openai.model,
+            text: assembledText,
+          });
+        }
+      }
+    }
+
+    if (!assembledText.trim()) {
+      sendSseEvent(res, 'error', {
+        category: 'state_error',
+        code: 'openai_empty_response',
+        message: 'OpenAI returned an empty response.',
+      });
+      res.end();
+      return;
+    }
+
+    sendSseEvent(res, 'final', {
+      provider: 'openai',
+      deliveryMode: 'native_stream',
+      model: config.openai.model,
+      text: assembledText.trim(),
+    });
+    logEvent('openai_request_stream_success', {
+      ip: getClientIp(req),
+      jobId: brokerRequest.jobId,
+      model: config.openai.model,
+    });
+    res.end();
+  } catch (error) {
+    if (!req.destroyed && !res.destroyed) {
+      sendSseEvent(res, 'error', toOpenAIStreamError(error, req.destroyed, upstreamController.signal.aborted));
+      res.end();
+    }
+  } finally {
+    clearTimeout(timeout);
+    req.off('close', abortUpstream);
+    upstreamReader.releaseLock();
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const origin = requestOrigin(req);
@@ -933,6 +1502,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/ai/openai/respond') {
+    await handleOpenAIRespond(req, res, origin);
+    return;
+  }
+
   sendError(req, res, 404, 'state_error', 'route_not_found', 'Route not found.');
 });
 
@@ -941,7 +1515,9 @@ server.listen(config.port, () => {
     port: config.port,
     sttConfigErrors: config.stt.configErrors.length,
     geminiConfigErrors: config.gemini.configErrors.length,
+    openaiConfigErrors: config.openai.configErrors.length,
     corsAllowlistSize: config.corsAllowlist.size,
     geminiModel: config.gemini.model,
+    openaiModel: config.openai.model,
   });
 });

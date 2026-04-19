@@ -1,5 +1,6 @@
 import { createAppError } from '../../errors';
 import { requestOpenAIBrokerResponse } from '../openaiBroker';
+import { getCharacterContract } from '../characterContracts';
 import type { OpenAIResponsesRequestBody } from '../openaiContract';
 import type { ResponseGenerationRequest, ResponseProvider } from './base';
 import {
@@ -18,15 +19,8 @@ function asAbortError() {
 function buildOpenAIRequestBody(request: ResponseGenerationRequest): OpenAIResponsesRequestBody {
   return {
     model: 'gpt-5-mini',
+    instructions: buildContactInstruction(request.contact),
     input: [
-      {
-        type: 'message',
-        role: 'developer',
-        content: [{
-          type: 'input_text',
-          text: buildContactInstruction(request.contact),
-        }],
-      },
       {
         type: 'message',
         role: 'user',
@@ -43,6 +37,7 @@ function buildOpenAIRequestBody(request: ResponseGenerationRequest): OpenAIRespo
     ],
     max_output_tokens: MAX_OUTPUT_TOKENS,
     temperature: 0.7,
+    store: false,
     text: {
       format: {
         type: 'text',
@@ -64,11 +59,13 @@ export class OpenAIResponseProvider implements ResponseProvider {
     callbacks: Parameters<ResponseProvider['generate']>[1],
     signal: AbortSignal,
   ) {
+    const contract = getCharacterContract(request.contact);
     const speaker = request.contact.name.toUpperCase();
     const emitPartial = (text: string) => {
       const normalized = normalizeContactReplyText(text, {
         speaker,
         signoff: request.contact.signoff,
+        contract,
       });
       if (!normalized) {
         return;
@@ -102,6 +99,7 @@ export class OpenAIResponseProvider implements ResponseProvider {
     const finalText = normalizeContactReplyText(result.text, {
       speaker,
       signoff: request.contact.signoff,
+      contract,
     });
     if (!finalText) {
       throw createAppError({

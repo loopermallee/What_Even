@@ -13,9 +13,11 @@ export type OpenAIResponsesInputMessage = {
 
 export type OpenAIResponsesRequestBody = {
   model: string;
+  instructions?: string;
   input: OpenAIResponsesInputMessage[];
   max_output_tokens?: number;
   temperature?: number;
+  store?: boolean;
   text?: {
     format: {
       type: 'text';
