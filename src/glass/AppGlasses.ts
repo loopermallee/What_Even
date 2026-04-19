@@ -114,6 +114,9 @@ export class AppGlasses {
       }
 
       if (input === 'TAP') {
+        if (this.isContactsSelectionInspection(inspection, resolvedSelectionIndex) && resolvedSelectionIndex !== null) {
+          this.store.setSelectedContactIndex(resolvedSelectionIndex);
+        }
         this.store.goToIncomingForSelectedContact();
         return { changed: true, requestClose: false };
       }
