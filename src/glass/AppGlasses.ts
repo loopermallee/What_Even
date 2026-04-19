@@ -331,7 +331,7 @@ export class AppGlasses {
         ...CONTACTS_LAYOUT.titleBody,
         containerID: GLASSES_CONTAINERS.dialogueText.id,
         containerName: GLASSES_CONTAINERS.dialogueText.name,
-        content: `${view.screenLabel}\n\n${view.dialogue}`,
+        content: view.dialogue,
         isEventCapture: view.dialogueCapturesInput ? 1 : 0,
       };
     }

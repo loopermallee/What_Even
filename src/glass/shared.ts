@@ -29,9 +29,9 @@ export const CONTACTS_TEXT_WRAP_WIDTH = 44;
 export const CONTACTS_LAYOUT = {
   titleBody: {
     xPosition: 24,
-    yPosition: 24,
+    yPosition: 30,
     width: 528,
-    height: 178,
+    height: 214,
   },
   footer: {
     xPosition: 24,
