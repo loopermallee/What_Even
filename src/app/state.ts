@@ -1159,6 +1159,9 @@ export class AppStore {
   backToContacts() {
     this.patch({
       screen: 'contacts',
+      // The Even contacts list does not carry a selected-row value across rebuilds,
+      // so returning here visually resets the highlight to the first contact.
+      selectedContactIndex: 0,
       engagedContactIndex: null,
       ...createInitialListeningState(),
       activeActionIndex: 0,
@@ -1172,6 +1175,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumeState({ lastContactIndex: 0 });
     this.persistResumableScreen('contacts');
   }
 
