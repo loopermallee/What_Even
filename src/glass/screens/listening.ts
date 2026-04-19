@@ -1,3 +1,4 @@
+import { getTurnSendModeLabel, getVisibleSttDraft } from '../../app/presentation';
 import type { AppState, TranscriptEntry } from '../../app/types';
 import { DEBUG_STT_COUNTDOWN } from '../../bridge/audio';
 import {
@@ -51,13 +52,15 @@ function formatCaptureCountdown(state: AppState) {
 
 function buildCaptureDialogue(state: AppState, visibleDraft: string) {
   const countdownLine = formatCaptureCountdown(state);
+  const modeLine = getTurnSendModeLabel(state.turnSendMode);
   const transcriptLines = visibleDraft
     ? wrapTextLines(visibleDraft, 27)
     : [];
-  const availableTranscriptLines = Math.max(0, 5 - 2);
+  const availableTranscriptLines = Math.max(0, 5 - 3);
   const visibleTranscriptLines = transcriptLines.slice(Math.max(0, transcriptLines.length - availableTranscriptLines));
 
   return [
+    modeLine,
     'You: (Recording...)',
     ...visibleTranscriptLines,
     countdownLine,
@@ -65,17 +68,9 @@ function buildCaptureDialogue(state: AppState, visibleDraft: string) {
 }
 
 function getVisibleDraft(state: AppState) {
-  const partial = state.sttPartialTranscript.trim();
-  const draftGraceActive = Boolean(
-    !partial &&
-    state.sttDraftDisplayText.trim() &&
-    state.sttDraftVisibleUntil !== null &&
-    Date.now() <= state.sttDraftVisibleUntil
-  );
-
   return {
-    partial,
-    visibleDraft: partial || (draftGraceActive ? state.sttDraftDisplayText.trim() : ''),
+    partial: state.sttPartialTranscript.trim(),
+    visibleDraft: getVisibleSttDraft(state),
   };
 }
 
@@ -101,7 +96,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
   const pendingUserEntry = getPendingUserEntry(state);
   const capturedText = pendingUserEntry?.text ?? visibleDraft;
   const reviewContent = formatGlassSpeakerLine({
-    label: 'You',
+    label: state.listeningMode === 'capture' ? getTurnSendModeLabel(state.turnSendMode) : 'You',
     text: capturedText || '(Recording...)',
     maxLines: 12,
   });

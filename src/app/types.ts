@@ -61,6 +61,7 @@ export type Contact = {
 
 export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
 export type ListeningMode = 'capture' | 'actions' | 'review';
+export type TurnSendMode = 'review' | 'fast';
 
 export type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
 export type EvenStartupStatus = 'idle' | 'starting' | 'ready' | 'blocked';
@@ -153,6 +154,7 @@ export type AppState = {
   simulatorSessionDetected: boolean;
   evenNativeHostDetected: boolean;
   selectedContactIndex: number;
+  turnSendMode: TurnSendMode;
   listeningActionIndex: number;
   listeningMode: ListeningMode;
   listeningReviewOffset: number;

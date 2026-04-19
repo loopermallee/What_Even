@@ -1,4 +1,4 @@
-import type { AppState, ResponseStatusPhase, TranscriptEntry, TurnState } from './types';
+import type { AppState, ResponseStatusPhase, TranscriptEntry, TurnSendMode, TurnState } from './types';
 
 const CANONICAL_TURN_LABELS: Record<TurnState, string> = {
   idle: 'Stand by',
@@ -51,4 +51,25 @@ export function shouldShowNoConfirmedSpeech(state: Pick<
     || state.audioFrameCount > 0;
 
   return captureStopped && hasListeningEvidence;
+}
+
+export function getVisibleSttDraft(state: Pick<
+  AppState,
+  'sttPartialTranscript'
+  | 'sttDraftDisplayText'
+  | 'sttDraftVisibleUntil'
+>) {
+  const partial = state.sttPartialTranscript.trim();
+  const draftGraceActive = Boolean(
+    !partial &&
+    state.sttDraftDisplayText.trim() &&
+    state.sttDraftVisibleUntil !== null &&
+    Date.now() <= state.sttDraftVisibleUntil
+  );
+
+  return partial || (draftGraceActive ? state.sttDraftDisplayText.trim() : '');
+}
+
+export function getTurnSendModeLabel(mode: TurnSendMode) {
+  return mode === 'fast' ? 'Fast auto-send' : 'Review send';
 }

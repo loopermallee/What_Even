@@ -1,5 +1,5 @@
 import { CONTACTS, RIGHT_CHARACTER } from './contacts';
-import { getCanonicalTurnLabel, getResponseStatusLabel, shouldShowNoConfirmedSpeech } from './presentation';
+import { getCanonicalTurnLabel, getResponseStatusLabel, getVisibleSttDraft, shouldShowNoConfirmedSpeech } from './presentation';
 import { resolveCodecExpression, resolveCodecPortraitFamily } from './portraitExpression';
 import type {
   AppState,
@@ -133,7 +133,7 @@ function buildSideState(options: {
 
 export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
   const contact = CONTACTS[state.selectedContactIndex];
-  const partial = state.sttPartialTranscript.trim();
+  const visibleDraft = getVisibleSttDraft(state);
   const latestUser = getLatestEntryByRole(state, ['user']);
   const latestContact = getLatestEntryByRole(state, ['contact', 'system']);
   const focusedEntry = getFocusedEntry(state);
@@ -175,13 +175,13 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
       activeSpeakerSide = 'right';
       expressionSourceText = currentLine;
       expressionRole = 'user';
-    } else if (partial) {
+    } else if (visibleDraft) {
       stateLabel = 'SPEAK';
       speakerLabel = 'YOU';
-      currentLine = partial;
+      currentLine = visibleDraft;
       previousLine = latestContact ? shortenLine(`${latestContact.speaker.toUpperCase()}: ${latestContact.text}`, 76) : null;
       activeSpeakerSide = 'right';
-      expressionSourceText = partial;
+      expressionSourceText = visibleDraft;
       expressionRole = 'user';
     } else {
       stateLabel = 'SPEAK';

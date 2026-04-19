@@ -17,10 +17,12 @@ import type {
   SttStatus,
   ScriptedLineMetadata,
   TranscriptEntry,
+  TurnSendMode,
   TurnState,
 } from './types';
 
 const DEVICE_PAGE_LIFECYCLE_KEY = 'what-even:device-page-lifecycle';
+const TURN_SEND_MODE_KEY = 'what-even:turn-send-mode';
 const LIVE_AUDIO_OPEN_THRESHOLD = 0.18;
 const LIVE_AUDIO_CLOSE_THRESHOLD = 0.08;
 
@@ -58,6 +60,27 @@ function readDevicePageLifecycleState(): DevicePageLifecycleState {
 function writeDevicePageLifecycleState(value: DevicePageLifecycleState) {
   try {
     localStorage.setItem(DEVICE_PAGE_LIFECYCLE_KEY, value);
+  } catch {
+    // storage may be unavailable in embedded contexts
+  }
+}
+
+function readTurnSendMode(): TurnSendMode {
+  try {
+    const value = localStorage.getItem(TURN_SEND_MODE_KEY);
+    if (value === 'fast' || value === 'review') {
+      return value;
+    }
+  } catch {
+    // storage may be unavailable in embedded contexts
+  }
+
+  return 'review';
+}
+
+function writeTurnSendMode(value: TurnSendMode) {
+  try {
+    localStorage.setItem(TURN_SEND_MODE_KEY, value);
   } catch {
     // storage may be unavailable in embedded contexts
   }
@@ -165,6 +188,7 @@ export function createInitialState(): AppState {
     simulatorSessionDetected: false,
     evenNativeHostDetected: hasEvenNativeHost(),
     selectedContactIndex: 0,
+    turnSendMode: readTurnSendMode(),
     ...createInitialListeningState(),
     activeActionIndex: 0,
     endedActionIndex: 0,
@@ -509,6 +533,17 @@ export class AppStore {
 
   moveContactSelection(direction: -1 | 1) {
     this.setSelectedContactIndex(this.state.selectedContactIndex + direction);
+  }
+
+  setTurnSendMode(mode: TurnSendMode) {
+    if (this.state.turnSendMode === mode) {
+      return;
+    }
+
+    writeTurnSendMode(mode);
+    this.patch({
+      turnSendMode: mode,
+    });
   }
 
   setActiveActionIndex(index: number) {
@@ -1015,6 +1050,20 @@ export class AppStore {
       sttDraftDisplayText: preservedDraft,
       sttDraftVisibleUntil: preservedDraft ? Date.now() + 1600 : null,
       speechWindow: createInitialSpeechWindowState(),
+    });
+  }
+
+  stageSttDraftTranscript(text: string, options?: { visibleForMs?: number }) {
+    const normalized = text.trim();
+    const now = Date.now();
+    this.patch({
+      sttPartialTranscript: '',
+      sttDraftDisplayText: normalized,
+      sttDraftVisibleUntil: normalized
+        ? now + Math.max(250, options?.visibleForMs ?? 1600)
+        : null,
+      speechWindow: createInitialSpeechWindowState(),
+      lastTranscriptAt: now,
     });
   }
 

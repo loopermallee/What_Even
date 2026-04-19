@@ -27,6 +27,7 @@ function getBridgeSyncSignature(state: AppState) {
   return JSON.stringify({
     screen: state.screen,
     screenBeforeDebug: state.screenBeforeDebug,
+    turnSendMode: state.turnSendMode,
     selectedContactIndex: state.selectedContactIndex,
     listeningActionIndex: state.listeningActionIndex,
     listeningMode: state.listeningMode,
@@ -53,6 +54,10 @@ function getBridgeSyncSignature(state: AppState) {
     audioCaptureStatus: state.audioCaptureStatus,
     sttStatus: state.sttStatus,
     sttPartialBucket: state.sttPartialTranscript ? state.sttPartialTranscript.slice(0, 64) : null,
+    sttDraftVisible: state.sttDraftDisplayText.trim().length > 0
+      && state.sttDraftVisibleUntil !== null
+      && Date.now() <= state.sttDraftVisibleUntil,
+    sttDraftBucket: state.sttDraftDisplayText ? state.sttDraftDisplayText.slice(0, 64) : null,
     sttError: state.sttError,
     micOpen: state.micOpen,
     elapsedCaptureDurationBucket: Math.floor(state.elapsedCaptureDurationMs / 100),

@@ -64,7 +64,7 @@ export class GeminiResponseProvider implements ResponseProvider {
         role: 'contact',
         speaker,
         text: normalized,
-        emotion: 'stern',
+        emotion: contract.fallbackStyle.defaultEmotion,
       });
     };
 
@@ -108,7 +108,7 @@ export class GeminiResponseProvider implements ResponseProvider {
           role: 'contact',
           speaker,
           text: finalText,
-          emotion: 'stern',
+          emotion: contract.fallbackStyle.defaultEmotion,
         },
         {
           role: 'system',

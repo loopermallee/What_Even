@@ -1,5 +1,6 @@
 import { CONTACTS, RIGHT_CHARACTER } from '../app/contacts';
 import { resolveCodecPortraitState, type CodecPortraitScene } from '../app/codecPortraitState';
+import { getTurnSendModeLabel, getVisibleSttDraft } from '../app/presentation';
 import { getScriptedScenariosForContact } from '../app/scriptedScenarios';
 import { AppStore } from '../app/state';
 import type { AppState } from '../app/types';
@@ -223,6 +224,7 @@ function getRawStateSnapshot(state: AppState) {
     started: state.started,
     evenNativeHostDetected: state.evenNativeHostDetected,
     selectedContactIndex: state.selectedContactIndex,
+    turnSendMode: state.turnSendMode,
     contact: CONTACTS[state.selectedContactIndex]?.name ?? 'Unknown',
     lifecycle: state.deviceLifecycleState,
     startup: {
@@ -247,6 +249,7 @@ function getRawStateSnapshot(state: AppState) {
     stt: {
       status: state.sttStatus,
       partialTranscript: state.sttPartialTranscript,
+      visibleDraft: getVisibleSttDraft(state),
       lastTranscriptAt: state.lastTranscriptAt,
       error: state.sttError,
       listeningSessionId: state.listeningSessionId,
@@ -745,6 +748,7 @@ export class AppWeb {
     const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
     const latestError = getLatestRuntimeError(state);
     const isSpeaking = animationFrame.talkingMode !== 'silent';
+    const turnSendModeLabel = getTurnSendModeLabel(state.turnSendMode);
     const surfaceMode = state.screen === 'contacts'
       ? 'Memory selector'
       : state.screen === 'incoming'
@@ -754,10 +758,11 @@ export class AppWeb {
             ? 'Review text'
             : state.listeningMode === 'actions'
               ? 'Transmit review'
-              : 'Live capture'
+              : turnSendModeLabel
           : state.screen === 'active'
             ? 'Caller response'
             : 'Link closed';
+    const visibleListeningDraft = getVisibleSttDraft(state);
     const leftPortrait = renderCodecPortrait({
       label: contact.name.toUpperCase(),
       tag: contact.portraitTag,
@@ -794,6 +799,11 @@ export class AppWeb {
             </div>
           </div>
           <div class="header-actions">
+            <button
+              id="turnModeBtn"
+              class="header-button"
+              title="Toggle between safer review send and fast auto-send"
+            >${escapeHtml(turnSendModeLabel)}</button>
             <span class="host-status-chip ${state.evenNativeHostDetected ? '' : 'host-status-chip-warning'}">
               ${state.evenNativeHostDetected ? 'Host linked' : 'Host unavailable'}
             </span>
@@ -891,7 +901,7 @@ export class AppWeb {
                 </div>
 
                 <div class="transcript-history codec-transcript-history">
-                  ${renderTranscriptPanel(state.transcript, { partialText: state.sttPartialTranscript })}
+                  ${renderTranscriptPanel(state.transcript, { partialText: visibleListeningDraft })}
                 </div>
               </div>
             </div>
@@ -1465,6 +1475,14 @@ export class AppWeb {
           this.store.setListeningActionIndex(1);
           this.store.retryListeningTurn();
         }
+      };
+    }
+
+    const turnModeBtn = document.querySelector<HTMLButtonElement>('#turnModeBtn');
+    if (turnModeBtn) {
+      turnModeBtn.onclick = () => {
+        const nextMode = this.store.getState().turnSendMode === 'fast' ? 'review' : 'fast';
+        this.store.setTurnSendMode(nextMode);
       };
     }
 

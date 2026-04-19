@@ -11,7 +11,7 @@ import { StartupLifecycleManager } from './startupLifecycle';
 import { AudioCaptureController, DEBUG_STT_COUNTDOWN } from './audio';
 import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
 import { createAppError, isAppError, redactSensitiveText, toErrorMessage, type AppError } from '../app/errors';
-import type { ErrorCategory, EvenStartupBlockedCode, NormalizedInput, RawEventDebugInfo } from '../app/types';
+import type { AppState, ErrorCategory, EvenStartupBlockedCode, NormalizedInput, RawEventDebugInfo } from '../app/types';
 import { requestSttBrokerAuth } from './sttAuth';
 import { hasEvenNativeHost } from './nativeHost';
 
@@ -113,6 +113,14 @@ type CleanupReason =
   | 'post-open-reconcile'
   | 'post-start-reconcile';
 
+type FastTurnCandidate = {
+  listeningSessionId: number;
+  sttSessionToken: number;
+  text: string;
+  finalAt: number;
+  deadlineAt: number;
+};
+
 export class EvenBridgeApp {
   private readonly store: AppStore;
   private readonly glasses: AppGlasses;
@@ -152,6 +160,8 @@ export class EvenBridgeApp {
   private sttReconnectAttemptedSessionId: number | null = null;
   private sttRetryTimer: number | null = null;
   private lastCommittedFinal: { sessionToken: number; text: string; at: number } | null = null;
+  private fastTurnCandidate: FastTurnCandidate | null = null;
+  private fastTurnAutoSendTimer: number | null = null;
   private pendingPartialFlushTimer: number | null = null;
   private pendingPartialText: string | null = null;
   private pendingPartialSessionToken: number | null = null;
@@ -163,6 +173,13 @@ export class EvenBridgeApp {
   private lastStaleNote: { key: string; at: number } | null = null;
   private readonly sttRetryDelayMs = 350;
   private readonly sttAdjacentFinalDedupeWindowMs = 1200;
+  private readonly fastTurnQuietHoldMs = 420;
+  private readonly fastTurnRetryPollMs = 220;
+  private readonly fastTurnMaxWaitMs = 1400;
+  private readonly fastTurnMaxActivityLevel = 0.09;
+  private readonly fastTurnMinCharacters = 8;
+  private readonly fastTurnMinWordCount = 2;
+  private readonly fastTurnMinLetterCount = 5;
   private readonly syncDebounceMs = 70;
   private readonly portraitSyncCooldownMs = 600;
   private readonly audioMetricThrottleMs = 90;
@@ -672,6 +689,7 @@ export class EvenBridgeApp {
     this.audioCapture.clearBuffer();
     this.previousObservedState = null;
     this.pendingCleanupReason = null;
+    this.clearFastTurnAutoSend('cleanup');
     this.clearPendingPartialFlush('cleanup');
     this.clearSttRetryTimer('cleanup');
 
@@ -825,6 +843,7 @@ export class EvenBridgeApp {
     this.lastAudioLifecycleSignature = this.getAudioLifecycleSignature(this.store.getState());
     this.unsubscribeStore = this.store.subscribe((nextState) => {
       this.captureCleanupReasonHint(nextState);
+      this.syncFastTurnCandidateForState(nextState);
       this.syncOutboundAdvanceForState(nextState);
       const nextSignature = this.getAudioLifecycleSignature(nextState);
       if (nextSignature === this.lastAudioLifecycleSignature) {
@@ -1191,6 +1210,7 @@ export class EvenBridgeApp {
     return JSON.stringify({
       screen: state.screen,
       screenBeforeDebug: state.screenBeforeDebug,
+      turnSendMode: state.turnSendMode,
       selectedContactIndex: state.selectedContactIndex,
       listeningActionIndex: state.listeningActionIndex,
       listeningMode: state.listeningMode,
@@ -1414,6 +1434,7 @@ export class EvenBridgeApp {
     this.activeSttSessionToken = sttSessionToken;
     this.clearSttStartInFlight(sttStartAttemptToken);
     this.lastCommittedFinal = null;
+    this.clearFastTurnAutoSend('new-session');
     this.clearPendingPartialFlush('new-session');
     this.store.setSttStatus('connecting', { error: null });
     this.store.setReliabilityDebug({
@@ -1442,6 +1463,7 @@ export class EvenBridgeApp {
         return;
       }
 
+      this.clearFastTurnAutoSend('stt-partial');
       this.queuePartialTranscriptFlush(text, listeningSessionId, sttSessionToken, session);
     });
 
@@ -1555,6 +1577,7 @@ export class EvenBridgeApp {
   private async stopSttSessionInternal(reason: string) {
     this.clearSttRetryTimer(reason);
     this.clearSttStartInFlight();
+    this.clearFastTurnAutoSend(reason);
     this.clearPendingPartialFlush(reason);
     if (!reason.includes('stt-retry')) {
       this.sttReconnectAttemptedSessionId = null;
@@ -1664,6 +1687,175 @@ export class EvenBridgeApp {
     return true;
   }
 
+  private countLetterCharacters(text: string) {
+    const matches = text.match(/[a-z]/gi);
+    return matches ? matches.length : 0;
+  }
+
+  private seemsLikeFastTurnGarbage(text: string) {
+    const normalized = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .trim();
+    if (!normalized) {
+      return true;
+    }
+
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      return true;
+    }
+
+    const fillerTokens = new Set(['uh', 'uhh', 'um', 'umm', 'hmm', 'mm', 'mhm', 'ah', 'er']);
+    return tokens.every((token) => fillerTokens.has(token));
+  }
+
+  private isEligibleFastTurnText(text: string) {
+    const normalized = text.trim();
+    if (!normalized || this.seemsLikeFastTurnGarbage(normalized)) {
+      return false;
+    }
+
+    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+    const letterCount = this.countLetterCharacters(normalized);
+    return normalized.length >= this.fastTurnMinCharacters
+      && wordCount >= this.fastTurnMinWordCount
+      && letterCount >= this.fastTurnMinLetterCount;
+  }
+
+  private canUseFastTurnCandidate(candidate: FastTurnCandidate) {
+    const state = this.store.getState();
+    return (
+      state.turnSendMode === 'fast' &&
+      state.started &&
+      state.screen === 'listening' &&
+      state.listeningMode === 'capture' &&
+      state.listeningSessionId === candidate.listeningSessionId &&
+      state.pendingResponseId === null &&
+      this.activeSttListeningSessionId === candidate.listeningSessionId &&
+      this.activeSttSessionToken === candidate.sttSessionToken
+    );
+  }
+
+  private scheduleFastTurnAutoSendCheck(delayMs = this.fastTurnQuietHoldMs) {
+    if (this.fastTurnAutoSendTimer !== null) {
+      window.clearTimeout(this.fastTurnAutoSendTimer);
+    }
+
+    if (!this.fastTurnCandidate) {
+      this.fastTurnAutoSendTimer = null;
+      return;
+    }
+
+    this.fastTurnAutoSendTimer = window.setTimeout(() => {
+      this.fastTurnAutoSendTimer = null;
+      this.evaluateFastTurnAutoSend();
+    }, delayMs);
+  }
+
+  private clearFastTurnAutoSend(_reason: string) {
+    if (this.fastTurnAutoSendTimer !== null) {
+      window.clearTimeout(this.fastTurnAutoSendTimer);
+      this.fastTurnAutoSendTimer = null;
+    }
+
+    this.fastTurnCandidate = null;
+  }
+
+  private commitFastTurnCandidate(text: string, options: { autoSend: boolean; reason: string }) {
+    this.clearFastTurnAutoSend(options.reason);
+
+    const committed = this.store.commitUserFinalTranscript(text, {
+      speaker: 'YOU',
+      contactName: this.currentContactName(),
+    });
+    if (!committed) {
+      return;
+    }
+
+    if (options.autoSend && this.store.getState().screen === 'listening') {
+      this.store.transmitCurrentUserTurn();
+    }
+  }
+
+  private evaluateFastTurnAutoSend() {
+    const candidate = this.fastTurnCandidate;
+    if (!candidate) {
+      return;
+    }
+
+    if (!this.canUseFastTurnCandidate(candidate)) {
+      this.clearFastTurnAutoSend('candidate-inactive');
+      return;
+    }
+
+    const state = this.store.getState();
+    if (state.sttPartialTranscript.trim()) {
+      this.clearFastTurnAutoSend('partial-resumed');
+      return;
+    }
+
+    if (state.listeningActivityLevel <= this.fastTurnMaxActivityLevel) {
+      this.commitFastTurnCandidate(candidate.text, {
+        autoSend: true,
+        reason: 'fast-auto-send',
+      });
+      return;
+    }
+
+    const now = Date.now();
+    if (now < candidate.deadlineAt) {
+      this.store.stageSttDraftTranscript(candidate.text, {
+        visibleForMs: Math.max(800, candidate.deadlineAt - now + 600),
+      });
+      this.scheduleFastTurnAutoSendCheck(this.fastTurnRetryPollMs);
+      return;
+    }
+
+    this.commitFastTurnCandidate(candidate.text, {
+      autoSend: false,
+      reason: 'fast-fallback-review',
+    });
+  }
+
+  private armFastTurnAutoSend(listeningSessionId: number, sttSessionToken: number, text: string) {
+    const finalAt = Date.now();
+    this.fastTurnCandidate = {
+      listeningSessionId,
+      sttSessionToken,
+      text,
+      finalAt,
+      deadlineAt: finalAt + this.fastTurnMaxWaitMs,
+    };
+    this.store.stageSttDraftTranscript(text, {
+      visibleForMs: this.fastTurnMaxWaitMs + 1200,
+    });
+    this.scheduleFastTurnAutoSendCheck(this.fastTurnQuietHoldMs);
+  }
+
+  private syncFastTurnCandidateForState(state: AppState) {
+    if (!this.fastTurnCandidate) {
+      return;
+    }
+
+    if (!state.started || state.screen !== 'listening') {
+      this.clearFastTurnAutoSend('left-listening');
+      return;
+    }
+
+    if (state.listeningMode !== 'capture') {
+      this.clearFastTurnAutoSend('capture-ended');
+      return;
+    }
+
+    if (state.turnSendMode !== 'fast') {
+      this.commitFastTurnCandidate(this.fastTurnCandidate.text, {
+        autoSend: false,
+        reason: 'mode-switched-to-review',
+      });
+    }
+  }
+
   private commitSttFinal(sttSessionToken: number, text: string) {
     const normalized = text.trim();
     if (!normalized) {
@@ -1681,6 +1873,18 @@ export class EvenBridgeApp {
       return;
     }
 
+    const state = this.store.getState();
+    if (state.turnSendMode === 'fast' && this.isEligibleFastTurnText(normalized)) {
+      this.armFastTurnAutoSend(state.listeningSessionId, sttSessionToken, normalized);
+      this.lastCommittedFinal = {
+        sessionToken: sttSessionToken,
+        text: dedupeText,
+        at: now,
+      };
+      return;
+    }
+
+    this.clearFastTurnAutoSend('manual-review-final');
     const committed = this.store.commitUserFinalTranscript(normalized, {
       speaker: 'YOU',
       contactName: this.currentContactName(),
@@ -1706,6 +1910,7 @@ export class EvenBridgeApp {
       return;
     }
 
+    this.clearFastTurnAutoSend('stt-error');
     this.clearPendingPartialFlush('stt-error');
     this.store.clearSttPartialTranscript();
 

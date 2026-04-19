@@ -75,7 +75,7 @@ export class OpenAIResponseProvider implements ResponseProvider {
         role: 'contact',
         speaker,
         text: normalized,
-        emotion: 'stern',
+        emotion: contract.fallbackStyle.defaultEmotion,
       });
     };
 
@@ -119,7 +119,7 @@ export class OpenAIResponseProvider implements ResponseProvider {
           role: 'contact',
           speaker,
           text: finalText,
-          emotion: 'stern',
+          emotion: contract.fallbackStyle.defaultEmotion,
         },
         {
           role: 'system',

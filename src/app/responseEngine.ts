@@ -78,12 +78,16 @@ function seemsOutOfDomain(normalized: string) {
   return !hasAny(normalized, TACTICAL_DOMAIN_KEYWORDS);
 }
 
-function getDeterministicEmotion(templateKey: keyof ReturnType<typeof getCharacterContract>['fallbackStyle']['templates']) {
+function getDeterministicEmotion(
+  templateKey: keyof ReturnType<typeof getCharacterContract>['fallbackStyle']['templates'],
+  contact: Contact,
+) {
+  const contract = getCharacterContract(contact);
   if (templateKey === 'location' || templateKey === 'hold') {
     return 'thinking' as const;
   }
 
-  return 'stern' as const;
+  return contract.fallbackStyle.defaultEmotion;
 }
 
 function buildContactReply(contact: Contact, templateKey: keyof ReturnType<typeof getCharacterContract>['fallbackStyle']['templates']) {
@@ -95,7 +99,7 @@ function buildContactReply(contact: Contact, templateKey: keyof ReturnType<typeo
     text: applyCharacterResponseCap(template, contract),
     emotion: templateKey === 'unknown'
       ? contract.fallbackStyle.defaultEmotion
-      : getDeterministicEmotion(templateKey),
+      : getDeterministicEmotion(templateKey, contact),
   };
 }
 
