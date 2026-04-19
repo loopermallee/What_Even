@@ -3,7 +3,7 @@ import type { NormalizedInput, RawEventDebugInfo } from '../app/types';
 import type { BridgePagePayload } from '../bridge/startupLifecycle';
 import { CreateStartUpPageContainer, TextContainerProperty } from '@evenrealities/even_hub_sdk';
 import { selectActionItemsForGlasses, selectDialogueForGlasses, selectGlassPortraitState, selectGlassScreenView } from './selectors';
-import { GLASSES_CONTAINERS, type GlassPortraitState } from './shared';
+import { CONTACTS_LAYOUT, GLASSES_CONTAINERS, type GlassPortraitState } from './shared';
 
 export type InputHandleResult = {
   changed: boolean;
@@ -317,10 +317,7 @@ export class AppGlasses {
     const view = this.getView();
     if (this.store.getState().screen === 'contacts') {
       return {
-        xPosition: 88,
-        yPosition: 28,
-        width: 206,
-        height: 44,
+        ...CONTACTS_LAYOUT.dialogue,
         containerID: GLASSES_CONTAINERS.dialogueText.id,
         containerName: GLASSES_CONTAINERS.dialogueText.name,
         content: this.getDialogueText(),
@@ -348,10 +345,7 @@ export class AppGlasses {
     const actions = this.getActionItems();
     if (this.store.getState().screen === 'contacts') {
       return {
-        xPosition: 88,
-        yPosition: 82,
-        width: 206,
-        height: 124,
+        ...CONTACTS_LAYOUT.list,
         containerID: GLASSES_CONTAINERS.statusList.id,
         containerName: GLASSES_CONTAINERS.statusList.name,
         itemContainer: {

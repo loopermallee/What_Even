@@ -22,6 +22,24 @@ export const GLASSES_CONTAINERS = {
   statusList: { id: 103, name: 'codec-status' },
 } as const;
 
+// Keep this tunable: perceived fit can differ a bit between the simulator and real G2 hardware.
+export const CONTACTS_TEXT_WRAP_WIDTH = 44;
+
+export const CONTACTS_LAYOUT = {
+  dialogue: {
+    xPosition: 24,
+    yPosition: 24,
+    width: 528,
+    height: 44,
+  },
+  list: {
+    xPosition: 24,
+    yPosition: 76,
+    width: 528,
+    height: 176,
+  },
+} as const;
+
 export type GlassScreenView = {
   screenLabel: string;
   statusLabel: string;
