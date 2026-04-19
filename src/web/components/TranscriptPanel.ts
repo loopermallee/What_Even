@@ -21,6 +21,34 @@ function roleLabel(role: TranscriptEntry['role']) {
   return 'SYSTEM';
 }
 
+function getEntryChipLabel(entry: TranscriptEntry) {
+  if (entry.streamState === 'placeholder' || entry.streamState === 'streaming') {
+    return 'RECV';
+  }
+
+  return roleLabel(entry.role);
+}
+
+function getEntryChipClassName(entry: TranscriptEntry) {
+  if (entry.streamState === 'placeholder' || entry.streamState === 'streaming') {
+    return 'transcript-chip-live';
+  }
+
+  return `transcript-chip-${entry.role}`;
+}
+
+function getEntryText(entry: TranscriptEntry) {
+  if (entry.text.trim()) {
+    return entry.text;
+  }
+
+  if (entry.streamState === 'placeholder' || entry.streamState === 'streaming') {
+    return 'Receiving...';
+  }
+
+  return '';
+}
+
 export function renderTranscriptPanel(transcript: TranscriptEntry[], options?: { partialText?: string }) {
   const partial = options?.partialText?.trim() ?? '';
   const partialHtml = partial
@@ -35,9 +63,9 @@ export function renderTranscriptPanel(transcript: TranscriptEntry[], options?: {
     .slice(-6)
     .map((entry) => `
       <div class="transcript-line transcript-role-${entry.role}">
-        <span class="transcript-chip transcript-chip-${entry.role}">${roleLabel(entry.role)}</span>
+        <span class="transcript-chip ${getEntryChipClassName(entry)}">${getEntryChipLabel(entry)}</span>
         <span class="transcript-speaker">${escapeHtml(entry.speaker)}</span>
-        <span class="transcript-text">${escapeHtml(entry.text)}</span>
+        <span class="transcript-text">${escapeHtml(getEntryText(entry))}</span>
       </div>
     `)
     .join('');

@@ -29,6 +29,27 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        '/api/ai/respond': {
+          target,
+          changeOrigin: false,
+          configure: (proxy) => {
+            proxy.on('error', (_error, _req, res) => {
+              if (!res.headersSent) {
+                res.writeHead(502, {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'no-store',
+                });
+              }
+
+              res.end(JSON.stringify({
+                ok: false,
+                category: 'network_error',
+                code: 'gemini_broker_unreachable',
+                message: 'Unable to reach Gemini broker service.',
+              }));
+            });
+          },
+        },
       },
     },
   };

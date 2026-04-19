@@ -435,6 +435,10 @@ export class EvenInputNormalizer {
       return null;
     }
 
+    if (!isStatusListContainer(inspection)) {
+      return null;
+    }
+
     if (isSimulatorStatusListUnknownTap(inspection)) {
       return null;
     }

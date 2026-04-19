@@ -328,7 +328,7 @@ export class AppGlasses {
     const view = this.getView();
     if (this.store.getState().screen === 'contacts') {
       return {
-        ...CONTACTS_LAYOUT.titleBody,
+        ...CONTACTS_LAYOUT.panel,
         containerID: GLASSES_CONTAINERS.dialogueText.id,
         containerName: GLASSES_CONTAINERS.dialogueText.name,
         content: view.dialogue,
@@ -353,12 +353,19 @@ export class AppGlasses {
 
   private buildFooterContainer() {
     const view = this.getView();
-    if (this.store.getState().screen !== 'contacts' || !view.footerLabel) {
+    if (this.store.getState().screen === 'contacts') {
+      return null;
+    }
+
+    if (!view.footerLabel) {
       return null;
     }
 
     return {
-      ...CONTACTS_LAYOUT.footer,
+      xPosition: 24,
+      yPosition: 236,
+      width: 528,
+      height: 24,
       containerID: GLASSES_CONTAINERS.footerText.id,
       containerName: GLASSES_CONTAINERS.footerText.name,
       content: view.footerLabel,

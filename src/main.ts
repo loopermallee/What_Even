@@ -1,4 +1,6 @@
 import { ResponseOrchestrator } from './app/ai/responseOrchestrator';
+import { DeterministicResponseProvider } from './app/ai/providers/deterministic';
+import { GeminiResponseProvider } from './app/ai/providers/gemini';
 import './style.css';
 import { AppStore } from './app/state';
 import { EvenBridgeApp } from './bridge/evenBridge';
@@ -47,7 +49,10 @@ function getBridgeSyncSignature(state: AppState) {
 }
 
 const store = new AppStore();
-const responseOrchestrator = new ResponseOrchestrator(store);
+const responseOrchestrator = new ResponseOrchestrator(store, {
+  primaryProvider: new GeminiResponseProvider(),
+  fallbackProvider: new DeterministicResponseProvider(),
+});
 const glassesApp = new AppGlasses(store);
 const bridgeApp = new EvenBridgeApp(store, glassesApp);
 

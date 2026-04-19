@@ -27,17 +27,12 @@ export const GLASSES_CONTAINERS = {
 export const CONTACTS_TEXT_WRAP_WIDTH = 44;
 
 export const CONTACTS_LAYOUT = {
-  titleBody: {
-    xPosition: 24,
-    yPosition: 30,
-    width: 528,
-    height: 214,
-  },
-  footer: {
-    xPosition: 24,
-    yPosition: 236,
-    width: 528,
-    height: 24,
+  // Keep the contacts frame comfortably inset so box-drawing glyphs do not clip on G2 edges.
+  panel: {
+    xPosition: 40,
+    yPosition: 42,
+    width: 496,
+    height: 196,
   },
 } as const;
 
