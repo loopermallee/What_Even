@@ -10,6 +10,7 @@ import type {
   EvenStartupBlockedCode,
   LaunchSource,
   ListeningCaptureState,
+  ListeningFailureKind,
   ListeningMode,
   NormalizedInput,
   PersistedResumeState,
@@ -198,6 +199,9 @@ function createInitialListeningState() {
     listeningActionIndex: 0,
     listeningMode: 'capture' as ListeningMode,
     listeningCaptureState: 'capturing' as ListeningCaptureState,
+    listeningFailureKind: null as ListeningFailureKind | null,
+    listeningFailureMessage: null as string | null,
+    listeningSessionReachedActiveCapture: false,
     listeningReviewOffset: 0,
   };
 }
@@ -691,6 +695,8 @@ export class AppStore {
     this.patch({
       listeningMode: mode,
       listeningCaptureState: mode === 'capture' ? this.state.listeningCaptureState : 'paused',
+      listeningFailureKind: mode === 'capture' ? this.state.listeningFailureKind : null,
+      listeningFailureMessage: mode === 'capture' ? this.state.listeningFailureMessage : null,
       listeningReviewOffset: mode === 'review' ? this.state.listeningReviewOffset : 0,
       listeningActionIndex: mode === 'actions' ? clampActionIndex(this.state.listeningActionIndex, 3) : 0,
     });
@@ -704,6 +710,8 @@ export class AppStore {
 
     this.patch({
       listeningCaptureState: captureState,
+      listeningFailureKind: captureState === 'capturing' ? null : this.state.listeningFailureKind,
+      listeningFailureMessage: captureState === 'capturing' ? null : this.state.listeningFailureMessage,
       listeningActionIndex: captureState === 'paused'
         ? clampActionIndex(this.state.listeningActionIndex, 3)
         : 0,
@@ -914,9 +922,11 @@ export class AppStore {
   }
 
   goToIncomingForSelectedContact() {
+    const selectedContactIndex = this.clampContactIndex(this.state.selectedContactIndex);
     this.patch({
       screen: 'incoming',
-      engagedContactIndex: this.state.selectedContactIndex,
+      selectedContactIndex,
+      engagedContactIndex: selectedContactIndex,
       ...createInitialListeningState(),
       activeActionIndex: 0,
       endedActionIndex: 0,
@@ -983,6 +993,29 @@ export class AppStore {
       ...createInitialSttState(listeningSessionId),
     });
     this.persistResumableScreen('listening');
+  }
+
+  markListeningSessionActiveCapture(listeningSessionId: number, startedAt = Date.now()) {
+    if (this.state.screen !== 'listening' || this.state.listeningSessionId !== listeningSessionId) {
+      return false;
+    }
+
+    if (
+      this.state.listeningSessionReachedActiveCapture &&
+      this.state.captureSessionStartedAt === startedAt &&
+      this.state.elapsedCaptureDurationMs === 0
+    ) {
+      return true;
+    }
+
+    this.patch({
+      listeningSessionReachedActiveCapture: true,
+      listeningFailureKind: null,
+      listeningFailureMessage: null,
+      captureSessionStartedAt: startedAt,
+      elapsedCaptureDurationMs: 0,
+    });
+    return true;
   }
 
   transmitCurrentUserTurn() {
@@ -1232,12 +1265,18 @@ export class AppStore {
 
     this.patch({
       listeningCaptureState: 'capturing',
+      listeningFailureKind: null,
+      listeningFailureMessage: null,
       listeningActionIndex: 0,
     });
   }
 
   completeListeningCaptureFromTimeout() {
     if (this.state.screen !== 'listening' || this.state.listeningMode !== 'capture') {
+      return;
+    }
+
+    if (!this.state.listeningSessionReachedActiveCapture) {
       return;
     }
 
@@ -1258,6 +1297,29 @@ export class AppStore {
     }
 
     this.presentNoSpeechFallback();
+  }
+
+  presentSpeechUnavailable(message: string) {
+    if (this.state.screen !== 'listening') {
+      return;
+    }
+
+    const nextMessage = message.trim() || 'Service connection failed.';
+    this.patch({
+      listeningCaptureState: 'paused',
+      listeningFailureKind: 'speech_unavailable',
+      listeningFailureMessage: nextMessage,
+      listeningActionIndex: 0,
+      listeningReviewOffset: 0,
+      listeningSessionReachedActiveCapture: false,
+      sttPartialTranscript: '',
+      sttDraftDisplayText: '',
+      sttDraftVisibleUntil: null,
+      captureSessionStartedAt: null,
+      elapsedCaptureDurationMs: 0,
+      speechWindow: createInitialSpeechWindowState(),
+    });
+    this.log(`Listening speech unavailable UI entered: ${nextMessage}`);
   }
 
   presentNoSpeechFallback() {
@@ -1283,6 +1345,7 @@ export class AppStore {
       responseStatusPhase: 'standby',
       responseStatusTimestamp: Date.now(),
     });
+    this.log(`Listening no-speech fallback entered for ${contact.name}.`);
     this.persistResumableScreen('active');
   }
 

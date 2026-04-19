@@ -181,6 +181,13 @@ function getUserActionConfig(state: AppState): UserActionConfig | null {
   }
 
   if (state.screen === 'listening') {
+    if (state.listeningFailureKind === 'speech_unavailable') {
+      return {
+        primary: { id: 'retryBtn', label: 'Retry' },
+        secondary: { id: 'backBtn', label: 'Back' },
+      };
+    }
+
     const hasReviewableText = Boolean(latestPendingUser?.text || visibleListeningDraft);
     if (state.listeningMode === 'capture' && state.listeningCaptureState === 'paused') {
       return hasReviewableText
@@ -269,6 +276,9 @@ function getRawStateSnapshot(state: AppState) {
       lastTranscriptAt: state.lastTranscriptAt,
       error: state.sttError,
       listeningSessionId: state.listeningSessionId,
+      listeningFailureKind: state.listeningFailureKind,
+      listeningFailureMessage: state.listeningFailureMessage,
+      listeningSessionReachedActiveCapture: state.listeningSessionReachedActiveCapture,
     },
     turn: {
       state: state.turnState,
@@ -286,6 +296,10 @@ function getRawStateSnapshot(state: AppState) {
 }
 
 function getLatestRuntimeError(state: AppState) {
+  if (state.listeningFailureKind === 'speech_unavailable' && state.listeningFailureMessage) {
+    return state.listeningFailureMessage;
+  }
+
   return state.responseError
     ?? state.sttError
     ?? state.audioError
@@ -763,6 +777,7 @@ export class AppWeb {
     const pickerVisible = state.screen === 'contacts' && this.contactPickerOpen;
     const transcriptTitle = state.screen === 'contacts' ? 'Recent Exchange' : 'Conversation Log';
     const latestError = getLatestRuntimeError(state);
+    const listeningFailureActive = state.screen === 'listening' && state.listeningFailureKind === 'speech_unavailable';
     const isSpeaking = animationFrame.talkingMode !== 'silent';
     const turnSendModeLabel = getTurnSendModeLabel(state.turnSendMode);
     const surfaceMode = state.screen === 'contacts'
@@ -770,14 +785,24 @@ export class AppWeb {
       : state.screen === 'incoming'
         ? 'Outbound handshake'
         : state.screen === 'listening'
-          ? state.listeningMode === 'review'
-            ? 'Review text'
-            : state.listeningMode === 'actions'
-              ? 'Transmit review'
-              : turnSendModeLabel
+          ? listeningFailureActive
+            ? 'Speech unavailable'
+            : state.listeningMode === 'review'
+              ? 'Review text'
+              : state.listeningMode === 'actions'
+                ? 'Transmit review'
+                : turnSendModeLabel
           : state.screen === 'active'
             ? 'Caller response'
             : 'Link closed';
+    const displayStateLabel = listeningFailureActive ? 'SPEECH OFFLINE' : scene.stateLabel;
+    const displaySpeakerLabel = listeningFailureActive ? 'SYSTEM' : scene.speakerLabel;
+    const displayCurrentLine = listeningFailureActive
+      ? 'Speech unavailable.'
+      : scene.currentLine;
+    const displayPreviousLine = listeningFailureActive
+      ? (state.listeningFailureMessage ?? 'Service connection failed.')
+      : scene.previousLine;
     const visibleListeningDraft = getVisibleSttDraft(state);
     const leftPortrait = renderCodecPortrait({
       label: contact.name.toUpperCase(),
@@ -875,11 +900,11 @@ export class AppWeb {
                     <div class="frequency-stack">
                       <span class="signal-label">TUNE</span>
                       <strong>${escapeHtml(contact.frequency)}</strong>
-                      <span class="signal-subtitle">${escapeHtml(scene.stateLabel)}</span>
+                      <span class="signal-subtitle">${escapeHtml(displayStateLabel)}</span>
                     </div>
                   </div>
                 </div>
-                <div class="codec-center-cap bottom">${escapeHtml(scene.speakerLabel)}</div>
+                <div class="codec-center-cap bottom">${escapeHtml(displaySpeakerLabel)}</div>
               </div>
 
               <div class="codec-portrait-bay codec-portrait-bay-right">
@@ -897,14 +922,14 @@ export class AppWeb {
                   <div>
                     <span class="section-label">Live Dialogue</span>
                     <div class="codec-dialogue-speaker-row">
-                      <span class="dialogue-speaker">${escapeHtml(scene.speakerLabel)}</span>
+                      <span class="dialogue-speaker">${escapeHtml(displaySpeakerLabel)}</span>
                       <span class="dialogue-frequency">FREQ ${escapeHtml(contact.frequency)}</span>
                     </div>
                   </div>
-                  <span class="codec-state-pill">${escapeHtml(scene.stateLabel)}</span>
+                  <span class="codec-state-pill">${escapeHtml(displayStateLabel)}</span>
                 </div>
-                <div class="dialogue-current-line">${escapeHtml(scene.currentLine)}</div>
-                ${scene.previousLine ? `<div class="dialogue-previous-line">${escapeHtml(scene.previousLine)}</div>` : ''}
+                <div class="dialogue-current-line">${escapeHtml(displayCurrentLine)}</div>
+                ${displayPreviousLine ? `<div class="dialogue-previous-line">${escapeHtml(displayPreviousLine)}</div>` : ''}
               </div>
 
               <div class="codec-transcript-deck">
@@ -1502,7 +1527,7 @@ export class AppWeb {
       retryBtn.onclick = () => {
         const currentState = this.store.getState();
         if (currentState.screen === 'listening') {
-          this.store.setListeningActionIndex(1);
+          this.store.setListeningActionIndex(currentState.listeningFailureKind === 'speech_unavailable' ? 0 : 1);
           this.store.retryListeningTurn();
         }
       };
@@ -1616,6 +1641,12 @@ export class AppWeb {
       backBtn.onclick = () => {
         if (this.store.getState().screen === 'ended') {
           this.store.setEndedActionIndex(0);
+          this.store.backToContacts();
+          return;
+        }
+
+        if (this.store.getState().screen === 'listening' && this.store.getState().listeningFailureKind === 'speech_unavailable') {
+          this.store.setListeningActionIndex(1);
           this.store.backToContacts();
         }
       };

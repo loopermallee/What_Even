@@ -12,32 +12,39 @@ import {
 const MAX_CAPTURE_DURATION_MS = 10_000;
 let lastCountdownSessionStartedAt: number | null = null;
 let lastCountdownRemainingMs: number | null = null;
+const COUNTDOWN_RENDER_BUCKET_MS = 500;
 
 function getMonotonicRemainingMs(state: AppState) {
   const rawRemainingMs = Math.max(0, MAX_CAPTURE_DURATION_MS - state.elapsedCaptureDurationMs);
   const sessionStartedAt = state.captureSessionStartedAt;
 
-  if (sessionStartedAt === null) {
+  if (sessionStartedAt === null || !state.listeningSessionReachedActiveCapture) {
     lastCountdownSessionStartedAt = null;
     lastCountdownRemainingMs = null;
-    return rawRemainingMs;
+    return null;
   }
+
+  const bucketedRemainingMs = Math.ceil(rawRemainingMs / COUNTDOWN_RENDER_BUCKET_MS) * COUNTDOWN_RENDER_BUCKET_MS;
 
   if (lastCountdownSessionStartedAt !== sessionStartedAt) {
     lastCountdownSessionStartedAt = sessionStartedAt;
-    lastCountdownRemainingMs = rawRemainingMs;
-    return rawRemainingMs;
+    lastCountdownRemainingMs = bucketedRemainingMs;
+    return bucketedRemainingMs;
   }
 
   const guardedRemainingMs = lastCountdownRemainingMs === null
-    ? rawRemainingMs
-    : Math.min(rawRemainingMs, lastCountdownRemainingMs);
+    ? bucketedRemainingMs
+    : Math.min(bucketedRemainingMs, lastCountdownRemainingMs);
   lastCountdownRemainingMs = guardedRemainingMs;
   return guardedRemainingMs;
 }
 
 function formatCaptureCountdown(state: AppState) {
   const remainingMs = getMonotonicRemainingMs(state);
+  if (remainingMs === null) {
+    return null;
+  }
+
   if (DEBUG_STT_COUNTDOWN && remainingMs <= 1000 && state.captureSessionStartedAt !== null) {
     console.debug('[stt-countdown:render]', {
       listeningSessionId: state.listeningSessionId,
@@ -63,7 +70,23 @@ function buildCaptureDialogue(state: AppState, visibleDraft: string) {
     modeLine,
     'You: (Recording...)',
     ...visibleTranscriptLines,
-    countdownLine,
+    ...(countdownLine ? [countdownLine] : []),
+  ].join('\n');
+}
+
+function buildConnectingDialogue() {
+  return [
+    'Speech standby',
+    'Connecting service...',
+    'Please hold.',
+  ].join('\n');
+}
+
+function buildSpeechUnavailableDialogue(state: AppState) {
+  return [
+    'Speech unavailable',
+    state.listeningFailureMessage || 'Service connection failed.',
+    'Select Retry or Back.',
   ].join('\n');
 }
 
@@ -110,6 +133,28 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       text: capturedText || '(Recording...)',
       maxLines: 12,
     });
+
+  if (state.listeningFailureKind === 'speech_unavailable') {
+    const actionWindow = getWrappedWindow({
+      content: buildSpeechUnavailableDialogue(state),
+      maxCharsPerLine: 27,
+      maxLines: 3,
+      offset: Number.MAX_SAFE_INTEGER,
+    });
+
+    return {
+      screenLabel: '',
+      statusLabel: '',
+      portraitAsset: null,
+      dialogue: actionWindow.text,
+      actions: ['Retry', 'Back'],
+      selectedActionIndex: Math.min(state.listeningActionIndex, 1),
+      mode: 'compact',
+      liveLineKind: 'none',
+      showPortrait: false,
+      showActions: true,
+    };
+  }
 
   if (state.listeningMode === 'capture' && state.listeningCaptureState === 'paused') {
     const actionWindow = getWrappedWindow({
@@ -158,6 +203,25 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     };
   }
 
+  if (
+    state.listeningMode === 'capture' &&
+    state.listeningCaptureState === 'capturing' &&
+    !state.listeningSessionReachedActiveCapture
+  ) {
+    return {
+      screenLabel: '',
+      statusLabel: '',
+      portraitAsset: null,
+      dialogue: buildConnectingDialogue(),
+      actions: [],
+      selectedActionIndex: 0,
+      mode: 'compact',
+      liveLineKind: 'none',
+      showPortrait: false,
+      showActions: false,
+    };
+  }
+
   return {
     screenLabel: '',
     statusLabel: '',
@@ -170,6 +234,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     showPortrait: false,
     showActions: false,
     dialogueCapturesInput: true,
-    footerLabel: state.listeningCaptureState === 'capturing' ? 'Tap: Pause' : undefined,
+    footerLabel: state.listeningCaptureState === 'capturing' && state.listeningSessionReachedActiveCapture ? 'Tap: Pause' : undefined,
   };
 }

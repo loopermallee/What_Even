@@ -63,6 +63,7 @@ export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ende
 export type ResumableGlassesScreen = Exclude<AppScreen, 'debug'>;
 export type ListeningMode = 'capture' | 'actions' | 'review';
 export type ListeningCaptureState = 'capturing' | 'paused';
+export type ListeningFailureKind = 'speech_unavailable';
 export type TurnSendMode = 'review' | 'fast';
 export type LaunchSource = 'glassesMenu' | 'appMenu' | 'unknown';
 
@@ -169,6 +170,9 @@ export type AppState = {
   listeningActionIndex: number;
   listeningMode: ListeningMode;
   listeningCaptureState: ListeningCaptureState;
+  listeningFailureKind: ListeningFailureKind | null;
+  listeningFailureMessage: string | null;
+  listeningSessionReachedActiveCapture: boolean;
   listeningReviewOffset: number;
   activeActionIndex: number;
   endedActionIndex: number;

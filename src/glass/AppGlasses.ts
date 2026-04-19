@@ -114,8 +114,9 @@ export class AppGlasses {
       }
 
       if (input === 'TAP') {
-        if (this.isContactsSelectionInspection(inspection, resolvedSelectionIndex) && resolvedSelectionIndex !== null) {
-          this.store.setSelectedContactIndex(resolvedSelectionIndex);
+        const tappedContactIndex = this.resolveContactsTapSelectionIndex(resolvedSelectionIndex, inspection);
+        if (tappedContactIndex !== null) {
+          this.store.setSelectedContactIndex(tappedContactIndex);
         }
         this.store.goToIncomingForSelectedContact();
         return { changed: true, requestClose: false };
@@ -134,6 +135,48 @@ export class AppGlasses {
     }
 
     if (state.screen === 'listening') {
+      if (state.listeningFailureKind === 'speech_unavailable') {
+        const actionCount = this.getActionItems().length;
+        if (input === 'UP') {
+          this.store.setListeningActionIndex(Math.max(0, state.listeningActionIndex - 1));
+          return { changed: true, requestClose: false };
+        }
+
+        if (input === 'DOWN') {
+          this.store.setListeningActionIndex(Math.min(Math.max(0, actionCount - 1), state.listeningActionIndex + 1));
+          return { changed: true, requestClose: false };
+        }
+
+        if (input === 'DOUBLE_TAP') {
+          this.store.backToContacts();
+          return { changed: true, requestClose: false };
+        }
+
+        if (input === 'TAP') {
+          const selectedActionIndex =
+            resolvedSelectionIndex !== null
+            && resolvedSelectionIndex >= 0
+            && resolvedSelectionIndex < actionCount
+              ? resolvedSelectionIndex
+              : state.listeningActionIndex;
+          const selectedAction = this.getActionItems()[selectedActionIndex] ?? '';
+
+          if (selectedAction === 'Retry') {
+            this.store.retryListeningTurn();
+            return { changed: true, requestClose: false };
+          }
+
+          if (selectedAction === 'Back') {
+            this.store.backToContacts();
+            return { changed: true, requestClose: false };
+          }
+
+          return { changed: false, requestClose: false };
+        }
+
+        return { changed: false, requestClose: false };
+      }
+
       if (state.listeningMode === 'capture' && state.listeningCaptureState === 'capturing') {
         if (input === 'TAP') {
           this.store.pauseListeningCapture();
@@ -270,6 +313,21 @@ export class AppGlasses {
     }
 
     return inspection.source === 'listEvent';
+  }
+
+  private resolveContactsTapSelectionIndex(resolvedSelectionIndex: number | null, inspection: RawEventDebugInfo) {
+    if (resolvedSelectionIndex !== null) {
+      return resolvedSelectionIndex;
+    }
+
+    if (
+      inspection.source === 'listEvent' &&
+      this.isStatusListInspection(inspection)
+    ) {
+      return this.store.getState().selectedContactIndex;
+    }
+
+    return this.store.getState().selectedContactIndex;
   }
 
   buildMinimalStartContainer(): BridgePagePayload {
