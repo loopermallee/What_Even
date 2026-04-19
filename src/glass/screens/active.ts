@@ -1,4 +1,5 @@
 import type { AppState } from '../../app/types';
+import { getResponseStatusLabel } from '../../app/presentation';
 import {
   formatGlassSpeakerLine,
   getActiveTranscriptEntry,
@@ -24,7 +25,7 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
 
   return {
     screenLabel: '',
-    statusLabel: '',
+    statusLabel: getResponseStatusLabel(state.responseStatusPhase).toUpperCase(),
     portraitAsset: null,
     dialogue: mode === 'read'
       ? formatGlassSpeakerLine({

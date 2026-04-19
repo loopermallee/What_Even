@@ -1,4 +1,4 @@
-import type { AppState, TranscriptEntry, TurnState } from './types';
+import type { AppState, ResponseStatusPhase, TranscriptEntry, TurnState } from './types';
 
 const CANONICAL_TURN_LABELS: Record<TurnState, string> = {
   idle: 'Stand by',
@@ -11,6 +11,17 @@ const CANONICAL_TURN_LABELS: Record<TurnState, string> = {
 
 export function getCanonicalTurnLabel(turnState: TurnState) {
   return CANONICAL_TURN_LABELS[turnState];
+}
+
+const RESPONSE_STATUS_LABELS: Record<ResponseStatusPhase, string> = {
+  standby: 'Stand by',
+  sending: 'Sending',
+  receiving: 'Receiving',
+  decrypting: 'Decrypting',
+};
+
+export function getResponseStatusLabel(responseStatusPhase: ResponseStatusPhase | null) {
+  return responseStatusPhase ? RESPONSE_STATUS_LABELS[responseStatusPhase] : 'Stand by';
 }
 
 export function hasCommittedUserFinalTranscript(transcript: TranscriptEntry[]) {

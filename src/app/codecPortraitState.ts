@@ -1,5 +1,5 @@
 import { CONTACTS, RIGHT_CHARACTER } from './contacts';
-import { getCanonicalTurnLabel, shouldShowNoConfirmedSpeech } from './presentation';
+import { getCanonicalTurnLabel, getResponseStatusLabel, shouldShowNoConfirmedSpeech } from './presentation';
 import { resolveCodecExpression, resolveCodecPortraitFamily } from './portraitExpression';
 import type {
   AppState,
@@ -196,7 +196,11 @@ export function resolveCodecPortraitState(state: AppState): CodecPortraitScene {
     }
   } else if (state.screen === 'active') {
     const current = focusedEntry ?? latestContact ?? latestUser;
-    stateLabel = state.responseError ? 'STAND BY' : getCanonicalTurnLabel(state.turnState).toUpperCase();
+    stateLabel = state.responseError
+      ? 'STAND BY'
+      : (state.responseStatusPhase
+        ? getResponseStatusLabel(state.responseStatusPhase).toUpperCase()
+        : getCanonicalTurnLabel(state.turnState).toUpperCase());
     speakerLabel = current?.speaker.toUpperCase() ?? contact.name.toUpperCase();
     currentLine = current?.text ?? 'Awaiting the next exchange.';
     previousLine = focusedEntry

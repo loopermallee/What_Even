@@ -262,7 +262,7 @@ export class AppGlasses {
 
   buildTextOnlyRebuildContainer(): BridgePagePayload {
     const view = this.getView();
-    const textObject = [this.buildDialogueContainer()];
+    const textObject = this.buildTextContainers();
     const listObject = view.showActions ? [this.buildStatusListContainer()] : [];
 
     return {
@@ -274,7 +274,7 @@ export class AppGlasses {
 
   buildRebuildContainer(): BridgePagePayload {
     const view = this.getView();
-    const textObject = [this.buildDialogueContainer()];
+    const textObject = this.buildTextContainers();
     const imageObject = view.showPortrait ? [this.buildPortraitImageContainer()] : [];
     const listObject = view.showActions ? [this.buildStatusListContainer()] : [];
 
@@ -313,15 +313,26 @@ export class AppGlasses {
     }
   }
 
+  private buildTextContainers() {
+    const textObject: NonNullable<BridgePagePayload['textObject']> = [this.buildDialogueContainer()];
+    const footer = this.buildFooterContainer();
+
+    if (footer) {
+      textObject.push(footer);
+    }
+
+    return textObject;
+  }
+
   private buildDialogueContainer() {
     const view = this.getView();
     if (this.store.getState().screen === 'contacts') {
       return {
-        ...CONTACTS_LAYOUT.dialogue,
+        ...CONTACTS_LAYOUT.titleBody,
         containerID: GLASSES_CONTAINERS.dialogueText.id,
         containerName: GLASSES_CONTAINERS.dialogueText.name,
-        content: this.getDialogueText(),
-        isEventCapture: 0,
+        content: `${view.screenLabel}\n\n${view.dialogue}`,
+        isEventCapture: view.dialogueCapturesInput ? 1 : 0,
       };
     }
 
@@ -340,24 +351,24 @@ export class AppGlasses {
     };
   }
 
+  private buildFooterContainer() {
+    const view = this.getView();
+    if (this.store.getState().screen !== 'contacts' || !view.footerLabel) {
+      return null;
+    }
+
+    return {
+      ...CONTACTS_LAYOUT.footer,
+      containerID: GLASSES_CONTAINERS.footerText.id,
+      containerName: GLASSES_CONTAINERS.footerText.name,
+      content: view.footerLabel,
+      isEventCapture: 0,
+    };
+  }
+
   private buildStatusListContainer() {
     const view = this.getView();
     const actions = this.getActionItems();
-    if (this.store.getState().screen === 'contacts') {
-      return {
-        ...CONTACTS_LAYOUT.list,
-        containerID: GLASSES_CONTAINERS.statusList.id,
-        containerName: GLASSES_CONTAINERS.statusList.name,
-        itemContainer: {
-          itemCount: actions.length,
-          itemName: actions,
-          itemWidth: 0,
-          isItemSelectBorderEn: 1,
-        },
-        isEventCapture: 1,
-      };
-    }
-
     return {
       xPosition: view.showPortrait ? 132 : 24,
       yPosition: view.showPortrait ? 182 : 196,

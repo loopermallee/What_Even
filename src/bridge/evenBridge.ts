@@ -1204,7 +1204,11 @@ export class EvenBridgeApp {
       lastHandledUserTranscriptId: state.lastHandledUserTranscriptId,
       pendingResponseId: state.pendingResponseId,
       responseError: state.responseError,
+      responseStatusPhase: state.responseStatusPhase,
       responseStatusTimestampBucket: state.responseStatusTimestamp ? Math.floor(state.responseStatusTimestamp / 1000) : null,
+      activeTranscriptTextBucket: state.activeTranscriptCursor >= 0
+        ? state.transcript[state.activeTranscriptCursor]?.text.slice(0, 96) ?? null
+        : null,
       speechWindowOpen: state.speechWindow.isOpen,
       speechWindowSource: state.speechWindow.source,
       speechWindowEntryId: state.speechWindow.entryId,

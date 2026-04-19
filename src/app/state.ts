@@ -1,5 +1,5 @@
 import { CONTACTS } from './contacts';
-import { generateDeterministicResponse, generateGreeting } from './responseEngine';
+import { generateGreeting } from './responseEngine';
 import { createScriptedTranscriptTurns, getScriptedScenarioById } from './scriptedScenarios';
 import { hasEvenNativeHost } from '../bridge/nativeHost';
 import type {
@@ -12,6 +12,7 @@ import type {
   NormalizedInput,
   RawEventDebugInfo,
   ReliabilityDebugInfo,
+  ResponseStatusPhase,
   SpeechWindowState,
   SttStatus,
   ScriptedLineMetadata,
@@ -95,6 +96,7 @@ function createInitialTurnState() {
     lastHandledUserTranscriptId: null as number | null,
     pendingResponseId: null as number | null,
     responseError: null as string | null,
+    responseStatusPhase: null as ResponseStatusPhase | null,
     responseStatusTimestamp: null as number | null,
   };
 }
@@ -355,6 +357,49 @@ export class AppStore {
     }));
 
     return [...this.state.transcript, ...entries];
+  }
+
+  private isPendingResponseJobActive(responseJobId: number) {
+    return this.state.screen === 'active' && this.state.pendingResponseId === responseJobId;
+  }
+
+  private findResponseEntryIndex(responseJobId: number, role: TranscriptEntry['role'] = 'contact') {
+    return this.state.transcript.findIndex((entry) => entry.responseJobId === responseJobId && entry.role === role);
+  }
+
+  private replaceTranscriptEntryAt(index: number, nextEntry: TranscriptEntry) {
+    const transcript = [...this.state.transcript];
+    transcript[index] = nextEntry;
+    return transcript;
+  }
+
+  private removeResponsePlaceholderEntries(responseJobId: number) {
+    return this.state.transcript.filter((entry) => entry.responseJobId !== responseJobId);
+  }
+
+  private dropActivePendingResponseArtifacts() {
+    if (this.state.pendingResponseId === null) {
+      return this.state.transcript;
+    }
+
+    return this.state.transcript.filter((entry) => {
+      if (entry.responseJobId !== this.state.pendingResponseId) {
+        return true;
+      }
+
+      return entry.streamState === 'complete';
+    });
+  }
+
+  private buildSpeechWindowForEntry(entry: TranscriptEntry | null) {
+    return entry && (entry.role === 'contact' || entry.role === 'system')
+      ? {
+        isOpen: true,
+        source: 'scripted_text' as const,
+        entryId: entry.id,
+        role: entry.role,
+      }
+      : createInitialSpeechWindowState();
   }
 
   log(message: string) {
@@ -631,6 +676,7 @@ export class AppStore {
       turnState: 'responding',
       pendingResponseId: null,
       responseError: null,
+      responseStatusPhase: 'standby',
       responseStatusTimestamp: Date.now(),
     });
   }
@@ -682,66 +728,32 @@ export class AppStore {
       this.patch({
         turnState: 'error',
         responseError: 'No selected contact available for deterministic response generation.',
+        responseStatusPhase: 'standby',
         responseStatusTimestamp: Date.now(),
       });
       return;
     }
 
     const responseWorkId = this.nextResponseWorkId++;
+    const placeholderEntry: TranscriptEntry = {
+      id: this.allocateTranscriptId(),
+      role: 'contact',
+      speaker: contact.name.toUpperCase(),
+      text: '',
+      contactName: contact.name,
+      createdAt: Date.now(),
+      responseJobId: responseWorkId,
+      streamState: 'placeholder',
+    };
+
     this.patch({
+      transcript: [...this.state.transcript, placeholderEntry],
       pendingResponseId: responseWorkId,
       turnState: 'processing_user',
       responseError: null,
+      responseStatusPhase: 'sending',
       responseStatusTimestamp: Date.now(),
     });
-
-    try {
-      const generated = generateDeterministicResponse(contact, newestUnhandledUser.text);
-
-      const latestState = this.getState();
-      if (latestState.screen !== 'active' || latestState.pendingResponseId !== responseWorkId) {
-        return;
-      }
-
-      this.patch({
-        turnState: 'responding',
-        responseStatusTimestamp: Date.now(),
-      });
-
-      const firstGeneratedIndex = this.state.transcript.length;
-      const transcript = this.appendGeneratedResponseTurns(generated);
-      const firstPresentedIndex = generated.length > 0 ? firstGeneratedIndex : getLatestTranscriptCursor(transcript);
-      const firstPresentedEntry = transcript[firstPresentedIndex] ?? null;
-      const nextSpeechWindow = firstPresentedEntry && (firstPresentedEntry.role === 'contact' || firstPresentedEntry.role === 'system')
-        ? {
-          isOpen: true,
-          source: 'scripted_text' as const,
-          entryId: firstPresentedEntry.id,
-          role: firstPresentedEntry.role,
-        }
-        : createInitialSpeechWindowState();
-      this.patch({
-        transcript,
-        activeTranscriptCursor: firstPresentedIndex,
-        lastHandledUserTranscriptId: newestUnhandledUser.id,
-        pendingResponseId: null,
-        turnState: 'complete',
-        responseError: null,
-        responseStatusTimestamp: Date.now(),
-        speechWindow: nextSpeechWindow,
-      });
-    } catch (error) {
-      if (this.state.pendingResponseId !== responseWorkId) {
-        return;
-      }
-
-      this.patch({
-        pendingResponseId: null,
-        turnState: 'error',
-        responseError: `Deterministic response failed: ${String(error)}`,
-        responseStatusTimestamp: Date.now(),
-      });
-    }
   }
 
   endListening() {
@@ -749,7 +761,8 @@ export class AppStore {
       screen: 'ended',
       ...createInitialListeningState(),
       endedActionIndex: 0,
-      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      transcript: this.dropActivePendingResponseArtifacts(),
+      activeTranscriptCursor: getLatestTranscriptCursor(this.dropActivePendingResponseArtifacts()),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialScriptedState(),
@@ -811,7 +824,8 @@ export class AppStore {
       screen: 'ended',
       ...createInitialListeningState(),
       endedActionIndex: 0,
-      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      transcript: this.dropActivePendingResponseArtifacts(),
+      activeTranscriptCursor: getLatestTranscriptCursor(this.dropActivePendingResponseArtifacts()),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialScriptedState(),
@@ -825,7 +839,8 @@ export class AppStore {
       screen: 'ended',
       ...createInitialListeningState(),
       endedActionIndex: 0,
-      activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
+      transcript: this.dropActivePendingResponseArtifacts(),
+      activeTranscriptCursor: getLatestTranscriptCursor(this.dropActivePendingResponseArtifacts()),
       speechWindow: createInitialSpeechWindowState(),
       ...this.clearTurnWorkForBoundary('idle'),
       ...createInitialScriptedState(),
@@ -872,6 +887,7 @@ export class AppStore {
       pendingResponseId: null,
       turnState: 'idle',
       responseError: null,
+      responseStatusPhase: 'standby',
       responseStatusTimestamp: Date.now(),
       ...createInitialAudioCaptureState(captureSessionStartedAt),
       ...createInitialSttState(listeningSessionId),
@@ -1033,6 +1049,7 @@ export class AppStore {
       pendingResponseId: null,
       turnState: this.state.screen === 'active' ? 'awaiting_user' : this.state.turnState,
       responseError: null,
+      responseStatusPhase: this.state.screen === 'active' ? 'standby' : this.state.responseStatusPhase,
       responseStatusTimestamp: Date.now(),
       lastTranscriptAt: Date.now(),
     });
@@ -1065,9 +1082,132 @@ export class AppStore {
       pendingResponseId: null,
       turnState: nextEntry.role === 'user' ? 'awaiting_user' : this.state.turnState,
       responseError: null,
+      responseStatusPhase: nextEntry.role === 'user' ? 'standby' : this.state.responseStatusPhase,
       responseStatusTimestamp: Date.now(),
       lastTranscriptAt: Date.now(),
     });
+  }
+
+  setResponseStatusPhase(responseStatusPhase: ResponseStatusPhase, options?: { responseJobId?: number | null; turnState?: TurnState }) {
+    if (
+      options?.responseJobId !== undefined &&
+      options.responseJobId !== null &&
+      !this.isPendingResponseJobActive(options.responseJobId)
+    ) {
+      this.noteIgnoredStaleCallback(`response-status:${options.responseJobId}`);
+      return false;
+    }
+
+    this.patch({
+      responseStatusPhase,
+      turnState: options?.turnState ?? this.state.turnState,
+      responseStatusTimestamp: Date.now(),
+    });
+    return true;
+  }
+
+  applyStreamingResponsePartial(responseJobId: number, partial: Pick<TranscriptEntry, 'role' | 'speaker' | 'text' | 'emotion'>) {
+    if (!this.isPendingResponseJobActive(responseJobId)) {
+      this.noteIgnoredStaleCallback(`response-partial:${responseJobId}`);
+      return false;
+    }
+
+    const entryIndex = this.findResponseEntryIndex(responseJobId, partial.role);
+    if (entryIndex < 0) {
+      this.noteIgnoredStaleCallback(`response-partial-missing:${responseJobId}`);
+      return false;
+    }
+
+    const currentEntry = this.state.transcript[entryIndex];
+    const nextEntry: TranscriptEntry = {
+      ...currentEntry,
+      speaker: partial.speaker,
+      text: partial.text,
+      emotion: partial.emotion,
+      streamState: 'streaming',
+    };
+    const transcript = this.replaceTranscriptEntryAt(entryIndex, nextEntry);
+
+    this.patch({
+      transcript,
+      activeTranscriptCursor: entryIndex,
+      speechWindow: this.buildSpeechWindowForEntry(nextEntry),
+      turnState: 'responding',
+      responseError: null,
+      responseStatusPhase: 'receiving',
+      responseStatusTimestamp: Date.now(),
+      lastTranscriptAt: Date.now(),
+    });
+    return true;
+  }
+
+  finalizePendingResponse(options: {
+    responseJobId: number;
+    handledUserTranscriptId: number;
+    responseTurns: Array<Pick<TranscriptEntry, 'role' | 'speaker' | 'text' | 'emotion'>>;
+  }) {
+    const { responseJobId, handledUserTranscriptId, responseTurns } = options;
+    if (!this.isPendingResponseJobActive(responseJobId)) {
+      this.noteIgnoredStaleCallback(`response-final:${responseJobId}`);
+      return false;
+    }
+
+    const placeholderIndex = this.findResponseEntryIndex(responseJobId, 'contact');
+    const baseTranscript = placeholderIndex >= 0
+      ? this.state.transcript.filter((_, index) => index !== placeholderIndex)
+      : this.state.transcript;
+    const contactName = CONTACTS[this.state.selectedContactIndex]?.name ?? 'Unknown';
+    const timestamp = Date.now();
+    const entries: TranscriptEntry[] = responseTurns.map((turn) => ({
+      id: this.allocateTranscriptId(),
+      role: turn.role,
+      speaker: turn.speaker,
+      text: turn.text,
+      contactName,
+      createdAt: timestamp,
+      emotion: turn.emotion,
+      responseJobId: turn.role === 'contact' ? responseJobId : null,
+      streamState: turn.role === 'contact' ? 'complete' : undefined,
+    }));
+    const transcript = [...baseTranscript, ...entries];
+    const firstPresentedIndex = entries.length > 0
+      ? transcript.length - entries.length
+      : getLatestTranscriptCursor(transcript);
+    const firstPresentedEntry = transcript[firstPresentedIndex] ?? null;
+
+    this.patch({
+      transcript,
+      activeTranscriptCursor: firstPresentedIndex,
+      lastHandledUserTranscriptId: handledUserTranscriptId,
+      pendingResponseId: null,
+      turnState: 'complete',
+      responseError: null,
+      responseStatusPhase: 'standby',
+      responseStatusTimestamp: timestamp,
+      speechWindow: this.buildSpeechWindowForEntry(firstPresentedEntry),
+      lastTranscriptAt: timestamp,
+    });
+    return true;
+  }
+
+  failPendingResponse(responseJobId: number, message: string) {
+    if (!this.isPendingResponseJobActive(responseJobId)) {
+      this.noteIgnoredStaleCallback(`response-error:${responseJobId}`);
+      return false;
+    }
+
+    const transcript = this.removeResponsePlaceholderEntries(responseJobId);
+    this.patch({
+      transcript,
+      activeTranscriptCursor: getLatestTranscriptCursor(transcript),
+      pendingResponseId: null,
+      turnState: 'error',
+      responseError: message,
+      responseStatusPhase: 'standby',
+      responseStatusTimestamp: Date.now(),
+      speechWindow: createInitialSpeechWindowState(),
+    });
+    return true;
   }
 
   startScriptedScenario(options: { contactIndex: number; scenarioId: string; autoplay?: boolean }) {
@@ -1119,6 +1259,7 @@ export class AppStore {
       activeTranscriptCursor,
       turnState: 'responding',
       responseError: null,
+      responseStatusPhase: 'standby',
       responseStatusTimestamp: timestamp,
       pendingResponseId: null,
       lastHandledUserTranscriptId: null,
@@ -1166,6 +1307,7 @@ export class AppStore {
       turnState: 'idle',
       pendingResponseId: null,
       responseError: null,
+      responseStatusPhase: 'standby',
       responseStatusTimestamp: Date.now(),
     });
   }

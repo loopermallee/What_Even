@@ -20,23 +20,24 @@ export const GLASSES_CONTAINERS = {
   portraitImage: { id: 101, name: 'codec-face' },
   dialogueText: { id: 102, name: 'codec-dialog' },
   statusList: { id: 103, name: 'codec-status' },
+  footerText: { id: 104, name: 'codec-footer' },
 } as const;
 
 // Keep this tunable: perceived fit can differ a bit between the simulator and real G2 hardware.
 export const CONTACTS_TEXT_WRAP_WIDTH = 44;
 
 export const CONTACTS_LAYOUT = {
-  dialogue: {
+  titleBody: {
     xPosition: 24,
     yPosition: 24,
     width: 528,
-    height: 44,
+    height: 178,
   },
-  list: {
+  footer: {
     xPosition: 24,
-    yPosition: 76,
+    yPosition: 236,
     width: 528,
-    height: 176,
+    height: 24,
   },
 } as const;
 
@@ -45,6 +46,7 @@ export type GlassScreenView = {
   statusLabel: string;
   portraitAsset?: PortraitAsset | null;
   dialogue: string;
+  footerLabel?: string;
   actions: string[];
   selectedActionIndex: number;
   mode: GlassPresentationMode;

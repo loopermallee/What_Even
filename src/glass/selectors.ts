@@ -33,6 +33,10 @@ export function selectGlassScreenView(state: AppState): GlassScreenView {
 
 export function selectDialogueForGlasses(state: AppState, cursorVisible = false) {
   const view = selectGlassScreenView(state);
+  if (state.screen === 'contacts') {
+    return `${view.screenLabel}\n\n${view.dialogue}`;
+  }
+
   const dialogue = cursorVisible && view.liveLineKind !== 'none'
     ? view.dialogue
     : view.dialogue.replace(/ \|$/gm, '');

@@ -98,6 +98,8 @@ export type TranscriptEntry = {
   contactName: string;
   createdAt: number;
   emotion?: CodecExpression;
+  responseJobId?: number | null;
+  streamState?: 'placeholder' | 'streaming' | 'complete' | 'failed';
 };
 
 export type SpeechWindowState = {
@@ -108,6 +110,7 @@ export type SpeechWindowState = {
 };
 
 export type TurnState = 'idle' | 'awaiting_user' | 'processing_user' | 'responding' | 'complete' | 'error';
+export type ResponseStatusPhase = 'standby' | 'sending' | 'receiving' | 'decrypting';
 
 export type AudioCaptureStatus = 'idle' | 'opening' | 'listening' | 'closing' | 'error';
 export type SttStatus = 'idle' | 'connecting' | 'streaming' | 'closing' | 'error';
@@ -167,6 +170,7 @@ export type AppState = {
   lastHandledUserTranscriptId: number | null;
   pendingResponseId: number | null;
   responseError: string | null;
+  responseStatusPhase: ResponseStatusPhase | null;
   responseStatusTimestamp: number | null;
   deviceLifecycleState: DevicePageLifecycleState;
   evenStartupStatus: EvenStartupStatus;

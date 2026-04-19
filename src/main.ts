@@ -1,3 +1,4 @@
+import { ResponseOrchestrator } from './app/ai/responseOrchestrator';
 import './style.css';
 import { AppStore } from './app/state';
 import { EvenBridgeApp } from './bridge/evenBridge';
@@ -22,7 +23,11 @@ function getBridgeSyncSignature(state: AppState) {
     lastHandledUserTranscriptId: state.lastHandledUserTranscriptId,
     pendingResponseId: state.pendingResponseId,
     responseError: state.responseError,
+    responseStatusPhase: state.responseStatusPhase,
     responseStatusTimestampBucket: state.responseStatusTimestamp ? Math.floor(state.responseStatusTimestamp / 1000) : null,
+    activeTranscriptTextBucket: state.activeTranscriptCursor >= 0
+      ? state.transcript[state.activeTranscriptCursor]?.text.slice(0, 96) ?? null
+      : null,
     speechWindowOpen: state.speechWindow.isOpen,
     speechWindowSource: state.speechWindow.source,
     speechWindowEntryId: state.speechWindow.entryId,
@@ -42,6 +47,7 @@ function getBridgeSyncSignature(state: AppState) {
 }
 
 const store = new AppStore();
+const responseOrchestrator = new ResponseOrchestrator(store);
 const glassesApp = new AppGlasses(store);
 const bridgeApp = new EvenBridgeApp(store, glassesApp);
 
@@ -65,6 +71,7 @@ store.subscribe((next) => {
 webApp.mount();
 
 window.addEventListener('beforeunload', () => {
+  responseOrchestrator.cleanup();
   bridgeApp.cleanup();
   webApp.cleanup();
 });
