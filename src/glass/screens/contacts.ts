@@ -4,7 +4,6 @@ import { type GlassScreenView } from '../shared';
 
 const FRAME_CONTENT_WIDTH = 22;
 const FRAME_RULE_WIDTH = FRAME_CONTENT_WIDTH + 2;
-const CONTACT_ROW_COUNT = 4;
 
 function padFrameLine(content = '') {
   return content.padEnd(FRAME_CONTENT_WIDTH, ' ');
@@ -31,17 +30,15 @@ function buildContactsFrame() {
     `╔${'═'.repeat(FRAME_RULE_WIDTH)}╗`,
     buildFrameRow(centerFrameLine('CODEC DIRECTORY')),
     buildFrameRule(),
-    ...Array.from({ length: CONTACT_ROW_COUNT }, () => buildFrameRow('')),
+    ...Array.from({ length: CONTACTS.length }, () => buildFrameRow('')),
     buildFrameRule(),
     buildFrameRow('Tap: Transmit'),
     `╚${'═'.repeat(FRAME_RULE_WIDTH)}╝`,
   ].join('\n');
 }
 
-function formatContactActionLabels(selectedContactIndex: number) {
-  return CONTACTS.map((item, index) => (
-    index === selectedContactIndex ? `> ${item.name}` : `  ${item.name}`
-  ));
+function formatContactActionLabels() {
+  return CONTACTS.map((item) => item.name);
 }
 
 export function buildContactsScreen(state: AppState): GlassScreenView {
@@ -50,7 +47,7 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
     statusLabel: '',
     portraitAsset: null,
     dialogue: buildContactsFrame(),
-    actions: formatContactActionLabels(state.selectedContactIndex),
+    actions: formatContactActionLabels(),
     selectedActionIndex: state.selectedContactIndex,
     mode: 'compact',
     liveLineKind: 'none',

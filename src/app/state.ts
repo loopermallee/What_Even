@@ -8,10 +8,13 @@ import type {
   AppState,
   DevicePageLifecycleState,
   EvenStartupBlockedCode,
+  LaunchSource,
   ListeningMode,
   NormalizedInput,
+  PersistedResumeState,
   RawEventDebugInfo,
   ReliabilityDebugInfo,
+  ResumableGlassesScreen,
   ResponseStatusPhase,
   SpeechWindowState,
   SttStatus,
@@ -23,6 +26,7 @@ import type {
 
 const DEVICE_PAGE_LIFECYCLE_KEY = 'what-even:device-page-lifecycle';
 const TURN_SEND_MODE_KEY = 'what-even:turn-send-mode';
+const RESUME_STATE_KEY = 'what-even:resume-state';
 const LIVE_AUDIO_OPEN_THRESHOLD = 0.18;
 const LIVE_AUDIO_CLOSE_THRESHOLD = 0.08;
 
@@ -81,6 +85,70 @@ function readTurnSendMode(): TurnSendMode {
 function writeTurnSendMode(value: TurnSendMode) {
   try {
     localStorage.setItem(TURN_SEND_MODE_KEY, value);
+  } catch {
+    // storage may be unavailable in embedded contexts
+  }
+}
+
+function isResumableGlassesScreen(value: unknown): value is ResumableGlassesScreen {
+  return value === 'contacts'
+    || value === 'incoming'
+    || value === 'listening'
+    || value === 'active'
+    || value === 'ended';
+}
+
+function sanitizeResumeState(value: unknown): PersistedResumeState {
+  const candidate = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  const lastContactIndex = typeof candidate?.lastContactIndex === 'number' && Number.isInteger(candidate.lastContactIndex)
+    ? candidate.lastContactIndex
+    : null;
+  const lastResumableGlassesScreen = isResumableGlassesScreen(candidate?.lastResumableGlassesScreen)
+    ? candidate.lastResumableGlassesScreen
+    : null;
+  const lastListeningMode =
+    candidate?.lastListeningMode === 'capture'
+    || candidate?.lastListeningMode === 'actions'
+    || candidate?.lastListeningMode === 'review'
+      ? candidate.lastListeningMode
+      : null;
+  const autoEnterListenOnGlassesLaunch = typeof candidate?.autoEnterListenOnGlassesLaunch === 'boolean'
+    ? candidate.autoEnterListenOnGlassesLaunch
+    : true;
+
+  return {
+    lastContactIndex,
+    lastResumableGlassesScreen,
+    lastListeningMode,
+    autoEnterListenOnGlassesLaunch,
+  };
+}
+
+function createDefaultResumeState(): PersistedResumeState {
+  return {
+    lastContactIndex: null,
+    lastResumableGlassesScreen: null,
+    lastListeningMode: null,
+    autoEnterListenOnGlassesLaunch: true,
+  };
+}
+
+function readResumeState(): PersistedResumeState {
+  try {
+    const raw = localStorage.getItem(RESUME_STATE_KEY);
+    if (!raw) {
+      return createDefaultResumeState();
+    }
+
+    return sanitizeResumeState(JSON.parse(raw));
+  } catch {
+    return createDefaultResumeState();
+  }
+}
+
+function writeResumeState(value: PersistedResumeState) {
+  try {
+    localStorage.setItem(RESUME_STATE_KEY, JSON.stringify(value));
   } catch {
     // storage may be unavailable in embedded contexts
   }
@@ -181,6 +249,7 @@ function createInitialScriptedState() {
 }
 
 export function createInitialState(): AppState {
+  const persistedResumeState = readResumeState();
   return {
     screen: 'contacts',
     screenBeforeDebug: 'contacts',
@@ -213,6 +282,8 @@ export function createInitialState(): AppState {
     ...createInitialSttState(0),
     speechWindow: createInitialSpeechWindowState(),
     logs: [],
+    launchSource: 'unknown',
+    autoEnterListenOnGlassesLaunch: persistedResumeState.autoEnterListenOnGlassesLaunch,
   };
 }
 
@@ -221,10 +292,18 @@ export class AppStore {
   private readonly listeners = new Set<Listener>();
   private nextTranscriptId: number;
   private nextResponseWorkId = 1;
+  private persistedResumeState: PersistedResumeState;
 
   constructor(initialState: AppState = createInitialState()) {
     this.state = initialState;
     this.nextTranscriptId = this.computeNextTranscriptId(initialState.transcript);
+    this.persistedResumeState = readResumeState();
+    if (this.persistedResumeState.autoEnterListenOnGlassesLaunch !== initialState.autoEnterListenOnGlassesLaunch) {
+      this.state = {
+        ...initialState,
+        autoEnterListenOnGlassesLaunch: this.persistedResumeState.autoEnterListenOnGlassesLaunch,
+      };
+    }
   }
 
   private computeNextTranscriptId(transcript: TranscriptEntry[]) {
@@ -261,6 +340,40 @@ export class AppStore {
       ...this.state,
       ...partial,
     });
+  }
+
+  private persistResumeState(update: Partial<PersistedResumeState>) {
+    const nextResumeState = sanitizeResumeState({
+      ...this.persistedResumeState,
+      ...update,
+    });
+    const currentSerialized = JSON.stringify(this.persistedResumeState);
+    const nextSerialized = JSON.stringify(nextResumeState);
+    if (currentSerialized === nextSerialized) {
+      return;
+    }
+
+    this.persistedResumeState = nextResumeState;
+    writeResumeState(nextResumeState);
+  }
+
+  private persistResumableScreen(screen: ResumableGlassesScreen | null) {
+    this.persistResumeState({
+      lastResumableGlassesScreen: screen,
+      lastListeningMode: screen === 'listening' ? this.state.listeningMode : this.persistedResumeState.lastListeningMode,
+    });
+  }
+
+  private clampContactIndex(index: number | null) {
+    if (CONTACTS.length === 0) {
+      return 0;
+    }
+
+    if (index === null || !Number.isInteger(index) || index < 0 || index >= CONTACTS.length) {
+      return 0;
+    }
+
+    return index;
   }
 
   private patchSpeechWindow(nextSpeechWindow: SpeechWindowState) {
@@ -451,6 +564,14 @@ export class AppStore {
     this.patch({ evenNativeHostDetected: detected });
   }
 
+  setLaunchSource(launchSource: LaunchSource) {
+    if (this.state.launchSource === launchSource) {
+      return;
+    }
+
+    this.patch({ launchSource });
+  }
+
   setScreen(screen: AppScreen) {
     this.patch({
       screen,
@@ -518,6 +639,7 @@ export class AppStore {
     const size = CONTACTS.length;
     const normalized = ((index % size) + size) % size;
     if (normalized === this.state.selectedContactIndex) {
+      this.persistResumeState({ lastContactIndex: normalized });
       return;
     }
 
@@ -529,6 +651,7 @@ export class AppStore {
       ...createInitialScriptedState(),
       ...this.clearTurnWorkForBoundary('idle'),
     });
+    this.persistResumeState({ lastContactIndex: normalized });
   }
 
   moveContactSelection(direction: -1 | 1) {
@@ -564,6 +687,7 @@ export class AppStore {
       listeningReviewOffset: mode === 'review' ? this.state.listeningReviewOffset : 0,
       listeningActionIndex: mode === 'actions' ? clampActionIndex(this.state.listeningActionIndex, 2) : 0,
     });
+    this.persistResumeState({ lastListeningMode: mode });
   }
 
   enterListeningReviewMode() {
@@ -600,6 +724,109 @@ export class AppStore {
 
   setEndedActionIndex(index: number) {
     this.patch({ endedActionIndex: clampActionIndex(index, 2) });
+  }
+
+  getPersistedResumeState() {
+    this.persistedResumeState = readResumeState();
+    return this.persistedResumeState;
+  }
+
+  setAutoEnterListenOnGlassesLaunch(enabled: boolean) {
+    if (this.state.autoEnterListenOnGlassesLaunch === enabled) {
+      return;
+    }
+
+    this.patch({ autoEnterListenOnGlassesLaunch: enabled });
+    this.persistResumeState({ autoEnterListenOnGlassesLaunch: enabled });
+  }
+
+  restoreSafeLaunchResume(options: {
+    contactIndex: number | null;
+    screen: ResumableGlassesScreen;
+    listeningMode: ListeningMode | null;
+  }) {
+    const selectedContactIndex = this.clampContactIndex(options.contactIndex);
+    const restoredListeningMode = options.listeningMode ?? this.persistedResumeState.lastListeningMode ?? 'capture';
+    const safeListeningMode: ListeningMode =
+      restoredListeningMode === 'actions' || restoredListeningMode === 'review' || restoredListeningMode === 'capture'
+        ? restoredListeningMode
+        : 'capture';
+
+    const basePatch: Partial<AppState> = {
+      selectedContactIndex,
+      speechWindow: createInitialSpeechWindowState(),
+      ...createInitialAudioCaptureState(),
+      ...createInitialSttState(this.state.listeningSessionId),
+      ...this.clearTurnWorkForBoundary('idle'),
+      ...createInitialScriptedState(),
+    };
+
+    if (options.screen === 'contacts') {
+      this.patch({
+        ...basePatch,
+        screen: 'contacts',
+        ...createInitialListeningState(),
+        activeActionIndex: 0,
+        endedActionIndex: 0,
+        dialogueIndex: -1,
+        activeTranscriptCursor: -1,
+        transcript: [],
+      });
+    } else if (options.screen === 'incoming') {
+      this.patch({
+        ...basePatch,
+        screen: 'incoming',
+        ...createInitialListeningState(),
+        activeActionIndex: 0,
+        endedActionIndex: 0,
+        dialogueIndex: -1,
+        activeTranscriptCursor: -1,
+        transcript: [],
+      });
+    } else if (options.screen === 'listening') {
+      this.patch({
+        ...basePatch,
+        screen: 'listening',
+        transcript: [],
+        listeningMode: safeListeningMode,
+        listeningActionIndex: 0,
+        listeningReviewOffset: 0,
+        activeActionIndex: 0,
+        endedActionIndex: 0,
+        dialogueIndex: -1,
+        activeTranscriptCursor: -1,
+      });
+    } else if (options.screen === 'active') {
+      this.patch({
+        ...basePatch,
+        screen: 'active',
+        transcript: [],
+        ...createInitialListeningState(),
+        activeActionIndex: 0,
+        endedActionIndex: 0,
+        dialogueIndex: -1,
+        activeTranscriptCursor: -1,
+        responseStatusPhase: 'standby',
+        responseStatusTimestamp: Date.now(),
+      });
+    } else {
+      this.patch({
+        ...basePatch,
+        screen: 'ended',
+        transcript: [],
+        ...createInitialListeningState(),
+        activeActionIndex: 0,
+        endedActionIndex: 0,
+        dialogueIndex: -1,
+        activeTranscriptCursor: -1,
+      });
+    }
+
+    this.persistResumeState({
+      lastContactIndex: selectedContactIndex,
+      lastResumableGlassesScreen: options.screen,
+      lastListeningMode: options.screen === 'listening' ? safeListeningMode : this.persistedResumeState.lastListeningMode,
+    });
   }
 
   setLastInput(normalizedInput: NormalizedInput, rawEvent: RawEventDebugInfo) {
@@ -679,6 +906,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumableScreen('incoming');
   }
 
   presentOutboundGreeting() {
@@ -714,6 +942,7 @@ export class AppStore {
       responseStatusPhase: 'standby',
       responseStatusTimestamp: Date.now(),
     });
+    this.persistResumableScreen('active');
   }
 
   enterListeningTurn() {
@@ -729,6 +958,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(captureSessionStartedAt),
       ...createInitialSttState(listeningSessionId),
     });
+    this.persistResumableScreen('listening');
   }
 
   transmitCurrentUserTurn() {
@@ -762,7 +992,7 @@ export class AppStore {
     if (!contact) {
       this.patch({
         turnState: 'error',
-        responseError: 'No selected contact available for deterministic response generation.',
+        responseError: 'No selected contact available for response generation.',
         responseStatusPhase: 'standby',
         responseStatusTimestamp: Date.now(),
       });
@@ -804,6 +1034,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumableScreen('ended');
   }
 
   advanceDialogueOrEnd() {
@@ -867,6 +1098,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumableScreen('ended');
   }
 
   ignoreIncoming() {
@@ -882,6 +1114,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumableScreen('ended');
   }
 
   backToContacts() {
@@ -899,6 +1132,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumableScreen('contacts');
   }
 
   redialCurrentContact() {
@@ -927,6 +1161,7 @@ export class AppStore {
       ...createInitialAudioCaptureState(captureSessionStartedAt),
       ...createInitialSttState(listeningSessionId),
     });
+    this.persistResumableScreen('listening');
   }
 
   setAudioCaptureStatus(status: AudioCaptureStatus, options?: { micOpen?: boolean; error?: string | null }) {
@@ -1328,6 +1563,10 @@ export class AppStore {
       ...createInitialAudioCaptureState(),
       ...createInitialSttState(this.state.listeningSessionId),
     });
+    this.persistResumeState({
+      lastContactIndex: this.clampContactIndex(options.contactIndex),
+      lastResumableGlassesScreen: 'active',
+    });
 
     return true;
   }
@@ -1359,5 +1598,6 @@ export class AppStore {
       responseStatusPhase: 'standby',
       responseStatusTimestamp: Date.now(),
     });
+    this.persistResumableScreen('ended');
   }
 }

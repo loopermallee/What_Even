@@ -7,11 +7,19 @@ import { InteractionFeedbackManager, type RawInteractionType } from '../interact
 import { AppGlasses } from '../glass/AppGlasses';
 import { EvenInputNormalizer } from './eventNormalizer';
 import { SerializedImageQueue } from './imageQueue';
-import { StartupLifecycleManager } from './startupLifecycle';
+import { StartupLifecycleManager, type BridgePagePayload } from './startupLifecycle';
 import { AudioCaptureController, DEBUG_STT_COUNTDOWN } from './audio';
 import { DeepgramStreamingSttSession, type StreamingSttSession } from './stt';
 import { createAppError, isAppError, redactSensitiveText, toErrorMessage, type AppError } from '../app/errors';
-import type { AppState, ErrorCategory, EvenStartupBlockedCode, NormalizedInput, RawEventDebugInfo } from '../app/types';
+import type {
+  AppState,
+  ErrorCategory,
+  EvenStartupBlockedCode,
+  LaunchSource,
+  NormalizedInput,
+  RawEventDebugInfo,
+  ResumableGlassesScreen,
+} from '../app/types';
 import { requestSttBrokerAuth } from './sttAuth';
 import { hasEvenNativeHost } from './nativeHost';
 
@@ -53,6 +61,14 @@ function safeSerialize(value: unknown) {
   } catch {
     return '[unserializable]';
   }
+}
+
+function normalizeLaunchSource(source: unknown): LaunchSource {
+  if (source === 'glassesMenu' || source === 'appMenu') {
+    return source;
+  }
+
+  return 'unknown';
 }
 
 function isSimulatorIdentityUser(user: unknown) {
@@ -193,10 +209,15 @@ export class EvenBridgeApp {
   private readonly deviceInfoRetryAttempts = 4;
   private readonly extendedDeviceObservationMs = 4_000;
   private readonly extendedDeviceObservationPollMs = 500;
+  private readonly launchSourceRecoveryDelayMs = 260;
+  private readonly contactsCaptureWarningCooldownMs = 800;
   private suppressSimulatorUnknownTapUntil = 0;
   private bridgeReadyAt: number | null = null;
   private portraitCooldownTimer: number | null = null;
   private outboundAdvanceTimer: number | null = null;
+  private launchSourceRecoveryTimer: number | null = null;
+  private lastContactsCaptureWarningAt = 0;
+  private lastContactsLayoutLogSignature = '';
   private sawLaunchSourceCallback = false;
   private latestLaunchSource: string | null = null;
   private firstLaunchSourceCallbackAt: number | null = null;
@@ -205,6 +226,10 @@ export class EvenBridgeApp {
   private latestDeviceStatusSnapshot: unknown = null;
   private latestDeviceStatusConnectType: string | null = null;
   private firstNonNullDeviceInfoAt: number | null = null;
+  private startupReadyForLaunchPolicy = false;
+  private launchResumePolicyApplied = false;
+  private launchResumeRecoveryAttempted = false;
+  private launchAutoEnterConsumed = false;
 
   constructor(store: AppStore, glasses: AppGlasses) {
     this.store = store;
@@ -246,6 +271,12 @@ export class EvenBridgeApp {
       this.latestDeviceStatusSnapshot = null;
       this.latestDeviceStatusConnectType = null;
       this.firstNonNullDeviceInfoAt = null;
+      this.clearLaunchSourceRecoveryTimer();
+      this.startupReadyForLaunchPolicy = false;
+      this.launchResumePolicyApplied = false;
+      this.launchResumeRecoveryAttempted = false;
+      this.launchAutoEnterConsumed = false;
+      this.store.setLaunchSource('unknown');
       this.store.log('Bridge connected.');
       this.store.log('Debug: bridge connected = true');
       this.attachLaunchSourceDiagnostics();
@@ -345,8 +376,10 @@ export class EvenBridgeApp {
       this.setupStoreAudioLifecycle();
       this.store.setEvenStartupReady();
       this.store.setStarted(true);
+      this.startupReadyForLaunchPolicy = true;
       this.lastRebuildSignature = this.glasses.getStructuralRebuildSignature();
       this.store.log('Startup lifecycle complete: rebuild flow ready.');
+      this.maybeApplyLaunchResumePolicy('startup-ready');
       this.syncNeedsForcedImages = true;
       this.queueSyncFromState();
     } catch (error) {
@@ -417,6 +450,11 @@ export class EvenBridgeApp {
     if (!fullRebuildOk) {
       this.store.log(`Startup rebuild failed at full layout stage (${labelPrefix}).`);
       return { ok: false as const, failedStage: 'full-layout' as const };
+    }
+
+    if (this.store.getState().screen === 'contacts') {
+      this.logContactsContainerDiagnostics(`${labelPrefix}:full-with-portrait`, this.glasses.buildRebuildContainer());
+      this.store.log('Contacts render verification pending: bridge accepted rebuild, but the simulator frame is not yet visually verified.');
     }
 
     return { ok: true as const, failedStage: null };
@@ -493,16 +531,19 @@ export class EvenBridgeApp {
 
     try {
       this.unsubscribeLaunchSource = this.bridge.onLaunchSource((source) => {
-        const normalizedSource = typeof source === 'string' ? source : String(source);
+        const normalizedSource = normalizeLaunchSource(source);
         const isFirstCallback = !this.sawLaunchSourceCallback;
         this.sawLaunchSourceCallback = true;
         this.latestLaunchSource = normalizedSource;
+        this.clearLaunchSourceRecoveryTimer();
+        this.store.setLaunchSource(normalizedSource);
         if (this.firstLaunchSourceCallbackAt === null) {
           this.firstLaunchSourceCallbackAt = Date.now();
         }
         this.store.log(
-          `Launch source callback${isFirstCallback ? ' (first)' : ''}: source=${normalizedSource}, elapsedSinceBridge=${this.formatElapsedFromBridge(this.firstLaunchSourceCallbackAt)}`
+          `Launch source normalized${isFirstCallback ? ' (first)' : ''}: ${normalizedSource} (${this.formatElapsedFromBridge(this.firstLaunchSourceCallbackAt)})`
         );
+        this.maybeApplyLaunchResumePolicy('launch-source-callback');
       });
       this.store.log('Launch source diagnostics listener attached.');
     } catch (error) {
@@ -570,10 +611,210 @@ export class EvenBridgeApp {
 
     this.store.setStarted(false);
     this.store.setDeviceLifecycleState('unknown');
+    this.clearLaunchSourceRecoveryTimer();
     await this.startupLifecycle.shutdown(reason).catch((error) => {
       this.store.log(`Partial-start shutdown failed (${reason}): ${String(error)}`);
     });
     this.store.setDeviceLifecycleState('unknown');
+  }
+
+  private clearLaunchSourceRecoveryTimer() {
+    if (this.launchSourceRecoveryTimer !== null) {
+      window.clearTimeout(this.launchSourceRecoveryTimer);
+      this.launchSourceRecoveryTimer = null;
+    }
+  }
+
+  private scheduleLaunchSourceRecoveryCheck(trigger: 'startup-ready' | 'launch-source-callback') {
+    this.clearLaunchSourceRecoveryTimer();
+    this.launchSourceRecoveryTimer = window.setTimeout(() => {
+      this.launchSourceRecoveryTimer = null;
+      this.store.log(
+        `Launch resume recovery recheck: callback still missing ${this.launchSourceRecoveryDelayMs}ms after ${trigger}; evaluating bounded recovery.`
+      );
+      this.maybeApplyLaunchResumePolicy('startup-ready-recovery');
+    }, this.launchSourceRecoveryDelayMs);
+  }
+
+  private tryRecoverMissingLaunchSource() {
+    const state = this.store.getState();
+    if (state.simulatorSessionDetected) {
+      return { ok: false as const, reason: 'simulator_detected' };
+    }
+
+    if (this.latestDeviceStatusConnectType !== 'connected') {
+      return {
+        ok: false as const,
+        reason: `connect_type_${this.latestDeviceStatusConnectType ?? 'unknown'}`,
+      };
+    }
+
+    if (this.firstNonNullDeviceInfoAt === null) {
+      return { ok: false as const, reason: 'device_info_missing' };
+    }
+
+    return { ok: true as const, reason: 'real_device_session_confirmed' };
+  }
+
+  private maybeApplyLaunchResumePolicy(trigger: 'startup-ready' | 'launch-source-callback' | 'startup-ready-recovery') {
+    if (!this.startupReadyForLaunchPolicy || this.launchResumePolicyApplied) {
+      return;
+    }
+
+    if (!this.sawLaunchSourceCallback) {
+      if (!this.launchResumeRecoveryAttempted) {
+        this.launchResumeRecoveryAttempted = true;
+        this.store.log(
+          `Launch resume deferred: launch source unavailable at ${trigger}; waiting ${this.launchSourceRecoveryDelayMs}ms for explicit callback before bounded recovery.`
+        );
+        this.scheduleLaunchSourceRecoveryCheck(trigger === 'launch-source-callback' ? trigger : 'startup-ready');
+        return;
+      }
+
+      const recovery = this.tryRecoverMissingLaunchSource();
+      if (!recovery.ok) {
+        this.launchResumePolicyApplied = true;
+        this.store.log(
+          `Launch resume path: unknown source using conservative fallback after recovery check (${recovery.reason}).`
+        );
+        return;
+      }
+
+      this.store.setLaunchSource('glassesMenu');
+      this.latestLaunchSource = 'glassesMenu';
+      this.store.log(
+        `Launch resume path: glassesMenu fast path recovered without explicit callback (${recovery.reason}).`
+      );
+    } else {
+      this.clearLaunchSourceRecoveryTimer();
+      if (trigger === 'launch-source-callback') {
+        this.store.log(`Launch resume resolution: explicit callback observed (${this.store.getState().launchSource}).`);
+      }
+    }
+
+    const launchSource = this.store.getState().launchSource;
+    const persistedResume = this.store.getPersistedResumeState();
+    this.store.log(
+      `Launch resume state loaded: contact=${persistedResume.lastContactIndex ?? 'none'}, screen=${persistedResume.lastResumableGlassesScreen ?? 'none'}, listening=${persistedResume.lastListeningMode ?? 'none'}, autoListen=${persistedResume.autoEnterListenOnGlassesLaunch ? 'on' : 'off'}`
+    );
+
+    if (launchSource === 'appMenu') {
+      this.launchResumePolicyApplied = true;
+      this.store.log('Launch resume path: appMenu preserved existing companion flow.');
+      return;
+    }
+
+    if (launchSource === 'unknown') {
+      this.launchResumePolicyApplied = true;
+      this.store.log('Launch resume path: unknown source using conservative fallback.');
+      return;
+    }
+
+    this.launchResumePolicyApplied = true;
+    this.store.log('Launch resume path: glassesMenu fast path engaged.');
+    const targetScreen = this.resolveGlassesMenuResumeScreen(persistedResume.lastResumableGlassesScreen);
+    this.store.restoreSafeLaunchResume({
+      contactIndex: persistedResume.lastContactIndex,
+      screen: targetScreen,
+      listeningMode: persistedResume.lastListeningMode,
+    });
+
+    if (!persistedResume.autoEnterListenOnGlassesLaunch) {
+      this.store.log('Auto-enter listening skipped: preference disabled.');
+      return;
+    }
+
+    this.attemptAutoEnterListeningForGlassesLaunch(targetScreen);
+  }
+
+  private resolveGlassesMenuResumeScreen(screen: ResumableGlassesScreen | null): ResumableGlassesScreen {
+    const requestedScreen = screen ?? 'contacts';
+    const state = this.store.getState();
+    const reliability = state.reliability;
+    const unsafeBoundary =
+      state.pendingResponseId !== null
+      || reliability.pendingPartialFlush
+      || reliability.sttRetryScheduledForSessionId !== null
+      || reliability.activeSttListeningSessionId !== null
+      || reliability.activeSttSessionToken !== null
+      || reliability.lastErrorCategory !== null
+      || reliability.lastCleanupReason !== null;
+
+    if (requestedScreen === 'listening' && unsafeBoundary) {
+      return 'incoming';
+    }
+
+    if (requestedScreen === 'active' && unsafeBoundary) {
+      return 'incoming';
+    }
+
+    if (requestedScreen === 'ended' && unsafeBoundary) {
+      return 'contacts';
+    }
+
+    return requestedScreen;
+  }
+
+  private attemptAutoEnterListeningForGlassesLaunch(restoredScreen: ResumableGlassesScreen) {
+    if (this.launchAutoEnterConsumed) {
+      return;
+    }
+
+    this.launchAutoEnterConsumed = true;
+    this.store.log('Auto-enter listening attempt: glasses launch.');
+    const readiness = this.getAutoEnterReadiness(restoredScreen);
+    if (!readiness.ok) {
+      this.store.log(`Auto-enter listening skipped: ${readiness.reason}.`);
+      if (restoredScreen === 'listening') {
+        const fallbackScreen = this.store.getState().selectedContactIndex >= 0 ? 'incoming' : 'contacts';
+        this.store.restoreSafeLaunchResume({
+          contactIndex: this.store.getState().selectedContactIndex,
+          screen: fallbackScreen,
+          listeningMode: null,
+        });
+      }
+      return;
+    }
+
+    this.store.enterListeningTurn();
+  }
+
+  private getAutoEnterReadiness(restoredScreen: ResumableGlassesScreen) {
+    const state = this.store.getState();
+    if (!this.bridge) {
+      return { ok: false as const, reason: 'bridge_unavailable' };
+    }
+
+    if (!state.started || state.evenStartupStatus !== 'ready') {
+      return { ok: false as const, reason: 'startup_not_ready' };
+    }
+
+    const devicePathReady = this.latestDeviceStatusConnectType === 'connected' || this.firstNonNullDeviceInfoAt !== null;
+    if (!devicePathReady) {
+      return { ok: false as const, reason: 'device_not_ready' };
+    }
+
+    if (state.pendingResponseId !== null) {
+      return { ok: false as const, reason: 'response_active' };
+    }
+
+    if (this.pendingCleanupReason !== null || state.reliability.pendingPartialFlush) {
+      return { ok: false as const, reason: 'cleanup_in_progress' };
+    }
+
+    if (state.reliability.sttRetryScheduledForSessionId !== null) {
+      return { ok: false as const, reason: 'stt_retry_pending' };
+    }
+
+    if (restoredScreen === 'active' || restoredScreen === 'ended') {
+      return { ok: false as const, reason: 'screen_not_compatible' };
+    }
+
+    if (!CONTACTS[state.selectedContactIndex]) {
+      return { ok: false as const, reason: 'contact_missing' };
+    }
+
+    return { ok: true as const };
   }
 
   queueSyncFromState() {
@@ -921,6 +1162,7 @@ export class EvenBridgeApp {
       return;
     }
 
+    this.clearLaunchSourceRecoveryTimer();
     await this.stopSttIfNeeded('close-request');
     await this.closeMicIfNeeded('close-request');
     await this.startupLifecycle.shutdown('close-request').catch((error) => {
@@ -949,6 +1191,7 @@ export class EvenBridgeApp {
 
     for (const item of normalized) {
       this.store.log(item.logLine);
+      this.maybeWarnContactsWrongCapture(item.inspection);
 
       if (!item.input) {
         continue;
@@ -1035,10 +1278,18 @@ export class EvenBridgeApp {
 
     this.refreshCursorBlinkLoop();
     const rebuildSignature = this.glasses.getStructuralRebuildSignature();
+    const currentState = this.store.getState();
+    if (currentState.screen === 'contacts') {
+      this.logContactsContainerDiagnostics('state-sync', this.glasses.buildRebuildContainer());
+    }
+
     if (rebuildSignature !== this.lastRebuildSignature) {
       const rebuilt = await this.startupLifecycle.attemptRebuild('state-sync', this.glasses.buildRebuildContainer());
       if (rebuilt) {
         this.lastRebuildSignature = rebuildSignature;
+        if (currentState.screen === 'contacts') {
+          this.store.log('Contacts render verification pending: rebuild succeeded during sync, but the simulator frame is not yet visually verified.');
+        }
       }
     }
 
@@ -2181,6 +2432,58 @@ export class EvenBridgeApp {
       : [inspection.normalizedTypeToken];
 
     return tokens.every((token) => token === 'UNKNOWN_EVENT');
+  }
+
+  private maybeWarnContactsWrongCapture(inspection: RawEventDebugInfo) {
+    if (this.store.getState().screen !== 'contacts') {
+      return;
+    }
+
+    const isDialogueContainer =
+      inspection.containerID === GLASSES_CONTAINERS.dialogueText.id &&
+      inspection.containerName === GLASSES_CONTAINERS.dialogueText.name;
+    if (!isDialogueContainer) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastContactsCaptureWarningAt < this.contactsCaptureWarningCooldownMs) {
+      return;
+    }
+
+    this.lastContactsCaptureWarningAt = now;
+    this.store.log(
+      `Contacts input warning: runtime input is arriving from codec-dialog (${inspection.source}/${inspection.rawEventTypeName}) while codec-status should be the sole capture surface.`
+    );
+  }
+
+  private logContactsContainerDiagnostics(context: string, payload: BridgePagePayload) {
+    const dialogueCapture = (payload.textObject ?? []).find((item) =>
+      item.containerID === GLASSES_CONTAINERS.dialogueText.id &&
+      item.containerName === GLASSES_CONTAINERS.dialogueText.name
+    )?.isEventCapture ?? 0;
+    const statusCapture = (payload.listObject ?? []).find((item) =>
+      item.containerID === GLASSES_CONTAINERS.statusList.id &&
+      item.containerName === GLASSES_CONTAINERS.statusList.name
+    )?.isEventCapture ?? 0;
+    const statusList = (payload.listObject ?? []).find((item) =>
+      item.containerID === GLASSES_CONTAINERS.statusList.id &&
+      item.containerName === GLASSES_CONTAINERS.statusList.name
+    );
+    const signature = JSON.stringify({
+      context,
+      dialogueCapture,
+      statusCapture,
+      statusItemCount: statusList?.itemContainer?.itemCount ?? 0,
+    });
+    if (signature === this.lastContactsLayoutLogSignature) {
+      return;
+    }
+
+    this.lastContactsLayoutLogSignature = signature;
+    this.store.log(
+      `Contacts layout (${context}): codec-dialog capture=${dialogueCapture}, codec-status capture=${statusCapture}, statusItems=${statusList?.itemContainer?.itemCount ?? 0}.`
+    );
   }
 
   private getAudioLifecycleSignature(state: ReturnType<AppStore['getState']>) {

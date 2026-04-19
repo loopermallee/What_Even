@@ -60,8 +60,10 @@ export type Contact = {
 };
 
 export type AppScreen = 'contacts' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
+export type ResumableGlassesScreen = Exclude<AppScreen, 'debug'>;
 export type ListeningMode = 'capture' | 'actions' | 'review';
 export type TurnSendMode = 'review' | 'fast';
+export type LaunchSource = 'glassesMenu' | 'appMenu' | 'unknown';
 
 export type DevicePageLifecycleState = 'unknown' | 'active' | 'inactive';
 export type EvenStartupStatus = 'idle' | 'starting' | 'ready' | 'blocked';
@@ -147,6 +149,13 @@ export type ReliabilityDebugInfo = {
   lastErrorCode: string | null;
 };
 
+export type PersistedResumeState = {
+  lastContactIndex: number | null;
+  lastResumableGlassesScreen: ResumableGlassesScreen | null;
+  lastListeningMode: ListeningMode | null;
+  autoEnterListenOnGlassesLaunch: boolean;
+};
+
 export type AppState = {
   screen: AppScreen;
   screenBeforeDebug: Exclude<AppScreen, 'debug'>;
@@ -201,4 +210,6 @@ export type AppState = {
   speechWindow: SpeechWindowState;
   reliability: ReliabilityDebugInfo;
   logs: string[];
+  launchSource: LaunchSource;
+  autoEnterListenOnGlassesLaunch: boolean;
 };

@@ -76,7 +76,7 @@ function toBridgePayload(payload: BridgePagePayload): BridgePagePayload {
       height: item.height,
       borderWidth: (item as { borderWidth?: number }).borderWidth,
       borderColor: (item as { borderColor?: number }).borderColor,
-      borderRdaius: (item as { borderRdaius?: number }).borderRdaius,
+      borderRadius: (item as { borderRadius?: number }).borderRadius,
       paddingLength: (item as { paddingLength?: number }).paddingLength,
       isEventCapture: item.isEventCapture,
       itemContainer: item.itemContainer
@@ -97,7 +97,7 @@ function toBridgePayload(payload: BridgePagePayload): BridgePagePayload {
       height: item.height,
       borderWidth: (item as { borderWidth?: number }).borderWidth,
       borderColor: (item as { borderColor?: number }).borderColor,
-      borderRdaius: (item as { borderRdaius?: number }).borderRdaius,
+      borderRadius: (item as { borderRadius?: number }).borderRadius,
       paddingLength: (item as { paddingLength?: number }).paddingLength,
       isEventCapture: item.isEventCapture,
       content: item.content,
@@ -269,12 +269,12 @@ function validateRebuildPayload(payload: BridgePagePayload) {
       errors.push(`containerName ${containerName} length=${containerName.length} exceeds max 16`);
     }
 
-    if (width < 20 || width > 200) {
-      errors.push(`image container ${containerName} width=${width} outside SDK range 20-200`);
+    if (width < 20 || width > 288) {
+      errors.push(`image container ${containerName} width=${width} outside SDK range 20-288`);
     }
 
-    if (height < 20 || height > 100) {
-      errors.push(`image container ${containerName} height=${height} outside SDK range 20-100`);
+    if (height < 20 || height > 144) {
+      errors.push(`image container ${containerName} height=${height} outside SDK range 20-144`);
     }
 
     validateBounds('image', containerName, x, y, width, height);
@@ -356,6 +356,7 @@ export class StartupLifecycleManager {
     const rebuilt = Boolean(await this.bridge.rebuildPageContainer(bridgePayload as any));
     this.log(`rebuild result (${label}): ${String(rebuilt)}`);
     if (rebuilt) {
+      this.log(`rebuild accepted by bridge (${label}); visual render verification still pending.`);
       this.setLifecycleState('active');
       return true;
     }

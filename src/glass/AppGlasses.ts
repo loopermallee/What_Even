@@ -1,3 +1,4 @@
+import { CONTACTS } from '../app/contacts';
 import type { AppStore } from '../app/state';
 import type { NormalizedInput, RawEventDebugInfo } from '../app/types';
 import type { BridgePagePayload } from '../bridge/startupLifecycle';
@@ -67,6 +68,7 @@ export class AppGlasses {
   }
 
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
+    const previousState = this.store.getState();
     this.store.setLastInput(input, inspection);
     const resolvedSelectionIndex = this.applyListSelectionFromInspection(inspection);
     const state = this.store.getState();
@@ -85,6 +87,16 @@ export class AppGlasses {
     }
 
     if (state.screen === 'contacts') {
+      if (
+        (input === 'UP' || input === 'DOWN') &&
+        this.isContactsSelectionInspection(inspection, resolvedSelectionIndex)
+      ) {
+        return {
+          changed: state.selectedContactIndex !== previousState.selectedContactIndex,
+          requestClose: false,
+        };
+      }
+
       if (input === 'UP') {
         this.store.moveContactSelection(-1);
         return { changed: true, requestClose: false };
@@ -208,26 +220,34 @@ export class AppGlasses {
   }
 
   private resolveListSelectionIndex(inspection: RawEventDebugInfo) {
-    if (inspection.currentSelectItemIndex !== null) {
-      return inspection.currentSelectItemIndex;
-    }
+    let resolvedIndex: number | null = null;
 
-    if (inspection.currentSelectItemName !== null) {
+    if (inspection.currentSelectItemIndex !== null) {
+      resolvedIndex = inspection.currentSelectItemIndex;
+    } else if (inspection.currentSelectItemName !== null) {
       const visibleItems = this.getActionItems();
-      const normalizeListLabel = (value: string) => value.replace(/^[>\s]+/, '').trim();
+      const normalizeListLabel = (value: string) => value.trim();
       const matchingIndex = visibleItems.findIndex((item) => item === inspection.currentSelectItemName);
       if (matchingIndex >= 0) {
-        return matchingIndex;
-      }
-
-      const normalizedName = normalizeListLabel(inspection.currentSelectItemName);
-      const normalizedMatchIndex = visibleItems.findIndex((item) => normalizeListLabel(item) === normalizedName);
-      if (normalizedMatchIndex >= 0) {
-        return normalizedMatchIndex;
+        resolvedIndex = matchingIndex;
+      } else {
+        const normalizedName = normalizeListLabel(inspection.currentSelectItemName);
+        const normalizedMatchIndex = visibleItems.findIndex((item) => normalizeListLabel(item) === normalizedName);
+        if (normalizedMatchIndex >= 0) {
+          resolvedIndex = normalizedMatchIndex;
+        }
       }
     }
 
-    return null;
+    if (
+      resolvedIndex !== null &&
+      this.store.getState().screen === 'contacts' &&
+      !this.isContactsSelectionInspection(inspection, resolvedIndex)
+    ) {
+      return null;
+    }
+
+    return resolvedIndex;
   }
 
   buildMinimalStartContainer(): BridgePagePayload {
@@ -301,6 +321,10 @@ export class AppGlasses {
     }
 
     if (state.screen === 'contacts') {
+      if (!this.isValidContactsIndex(index)) {
+        return;
+      }
+
       this.store.setSelectedContactIndex(index);
       return;
     }
@@ -399,7 +423,7 @@ export class AppGlasses {
           itemCount: actions.length,
           itemName: actions,
           itemWidth: 0,
-          isItemSelectBorderEn: 0,
+          isItemSelectBorderEn: 1,
         },
         isEventCapture: 1,
       };
@@ -431,5 +455,26 @@ export class AppGlasses {
       containerID: GLASSES_CONTAINERS.portraitImage.id,
       containerName: GLASSES_CONTAINERS.portraitImage.name,
     };
+  }
+
+  private isStatusListInspection(inspection: RawEventDebugInfo) {
+    return (
+      inspection.containerID === GLASSES_CONTAINERS.statusList.id &&
+      inspection.containerName === GLASSES_CONTAINERS.statusList.name
+    );
+  }
+
+  private isValidContactsIndex(index: number) {
+    return index >= 0 && index < CONTACTS.length;
+  }
+
+  private isContactsSelectionInspection(inspection: RawEventDebugInfo, resolvedIndex: number | null) {
+    return (
+      this.store.getState().screen === 'contacts' &&
+      inspection.source === 'listEvent' &&
+      this.isStatusListInspection(inspection) &&
+      resolvedIndex !== null &&
+      this.isValidContactsIndex(resolvedIndex)
+    );
   }
 }
