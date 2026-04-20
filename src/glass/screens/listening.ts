@@ -4,7 +4,6 @@ import { DEBUG_STT_COUNTDOWN } from '../../bridge/audio';
 import {
   formatHorizontalActions,
   formatGlassSpeakerLine,
-  getSelectedContact,
   getLatestTranscriptEntryByRole,
   getWrappedWindow,
   toSubtitleLines,
@@ -126,7 +125,6 @@ function getPendingUserEntry(state: AppState): TranscriptEntry | null {
 }
 
 export function buildListeningScreen(state: AppState): GlassScreenView {
-  const contact = getSelectedContact(state);
   const { visibleDraft } = getVisibleDraft(state);
   const pendingUserEntry = getPendingUserEntry(state);
   const capturedText = pendingUserEntry?.text ?? visibleDraft;
@@ -153,7 +151,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       screenLabel: '',
       statusLabel: '',
       dialogue: actionWindow.text,
-      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  LISTEN`,
+      topRowText: ' ',
       centerReadoutText: 'SPEECH OFFLINE',
       subtitleText,
       centerTopLabelText: 'PTT',
@@ -188,7 +186,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       screenLabel: '',
       statusLabel: '',
       dialogue: actionWindow.text,
-      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  REVIEW`,
+      topRowText: ' ',
       centerReadoutText: actions[state.listeningActionIndex] ?? actions[0],
       subtitleText,
       centerTopLabelText: 'PTT',
@@ -224,7 +222,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       screenLabel: '',
       statusLabel: '',
       dialogue: actionWindow.text,
-      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  REVIEW`,
+      topRowText: ' ',
       centerReadoutText: 'TRANSMIT READY',
       subtitleText,
       centerTopLabelText: 'PTT',
@@ -255,7 +253,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       screenLabel: '',
       statusLabel: '',
       dialogue: connectingDialogue,
-      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  LISTEN`,
+      topRowText: ' ',
       centerReadoutText: 'CONNECTING',
       subtitleText,
       centerTopLabelText: 'PTT',
@@ -281,7 +279,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     screenLabel: '',
     statusLabel: '',
     dialogue: captureDialogue,
-    topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  CAPTURE`,
+    topRowText: ' ',
     centerReadoutText: state.listeningSessionReachedActiveCapture ? 'REC ON' : 'REC WAIT',
     subtitleText,
     centerTopLabelText: 'PTT',

@@ -19,7 +19,7 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
     screenLabel: 'Codec Directory',
     statusLabel: 'DIRECTORY',
     dialogue: subtitleText,
-    topRowText: `${selectedContact.name.toUpperCase()}  ${selectedContact.frequency}  DIRECTORY`,
+    topRowText: ' ',
     centerReadoutText: `FREQ ${selectedContact.frequency}`,
     subtitleText,
     centerTopLabelText: 'PTT',

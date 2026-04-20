@@ -9,7 +9,7 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
     screenLabel: `Transmitting ${contact.name}...`,
     statusLabel: 'Securing transmission.',
     dialogue: subtitleText,
-    topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  TRANSMIT`,
+    topRowText: ' ',
     centerReadoutText: `FREQ ${contact.frequency}`,
     subtitleText,
     centerTopLabelText: 'PTT',

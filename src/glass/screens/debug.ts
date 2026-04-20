@@ -19,7 +19,7 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
       `RAW ${(raw?.rawEventTypeName ?? 'NONE').slice(0, 18)}`,
       `LIFE ${state.deviceLifecycleState.toUpperCase()}`,
     ].join('\n'), 27, 4),
-    topRowText: 'DEBUG  INSPECTOR  DEV',
+    topRowText: ' ',
     centerReadoutText: `SCREEN ${state.screenBeforeDebug.toUpperCase()}`,
     subtitleText,
     centerTopLabelText: 'PTT',

@@ -9,7 +9,7 @@ export function buildEndedScreen(_state: AppState): GlassScreenView {
     screenLabel: '',
     statusLabel: '',
     dialogue: wrapText('Transmission ended.', 27, 1),
-    topRowText: 'SYSTEM  CODEC  LINK CLOSED',
+    topRowText: ' ',
     centerReadoutText: 'SESSION ENDED',
     subtitleText,
     centerTopLabelText: 'PTT',

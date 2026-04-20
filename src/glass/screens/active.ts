@@ -37,7 +37,7 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
         maxLines: 6,
       })
       : wrapText(formatGlassSpeakerLine({ label: speakerLabel, text: line, maxLines: 4 }), 27, 4),
-    topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  ${statusLabel}`,
+    topRowText: ' ',
     centerReadoutText: `FREQ ${contact.frequency}`,
     subtitleText,
     centerTopLabelText: 'PTT',
