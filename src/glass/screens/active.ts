@@ -4,6 +4,7 @@ import {
   formatGlassSpeakerLine,
   getActiveTranscriptEntry,
   getSelectedContact,
+  toSubtitleLines,
   shouldUseReadMode,
   wrapText,
   type GlassScreenView,
@@ -22,11 +23,11 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
   })
     ? 'read'
     : 'compact';
+  const subtitleLines = toSubtitleLines(`${speakerLabel}: ${line}`, 30, 2);
 
   return {
     screenLabel: '',
     statusLabel: getResponseStatusLabel(state.responseStatusPhase).toUpperCase(),
-    portraitAsset: null,
     dialogue: mode === 'read'
       ? formatGlassSpeakerLine({
         label: speakerLabel,
@@ -38,7 +39,11 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     selectedActionIndex: state.activeActionIndex,
     mode,
     liveLineKind: 'none',
-    showPortrait: false,
+    showPortrait: true,
     showActions: true,
+    centerModuleVariant: 'active',
+    subtitleLines,
+    actionMode: 'hidden-list',
+    captureSurfaceMode: 'list',
   };
 }

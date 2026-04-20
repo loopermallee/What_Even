@@ -263,6 +263,8 @@ export function createInitialState(): AppState {
     simulatorSessionDetected: false,
     evenNativeHostDetected: hasEvenNativeHost(),
     selectedContactIndex: 0,
+    trustedContactsHighlightIndex: null,
+    trustedContactsHighlightEstablishedAt: null,
     engagedContactIndex: null,
     turnSendMode: readTurnSendMode(),
     ...createInitialListeningState(),
@@ -646,15 +648,29 @@ export class AppStore {
     });
   }
 
-  setSelectedContactIndex(index: number) {
+  setSelectedContactIndex(index: number, options?: { trustVisibleHighlight?: boolean }) {
     const normalized = this.clampContactIndex(index);
+    const shouldTrustVisibleHighlight = Boolean(options?.trustVisibleHighlight);
+    const nextTrustedContactsHighlightIndex = shouldTrustVisibleHighlight ? normalized : null;
+    const nextTrustedContactsHighlightEstablishedAt = shouldTrustVisibleHighlight ? Date.now() : null;
     if (normalized === this.state.selectedContactIndex) {
+      if (
+        this.state.trustedContactsHighlightIndex !== nextTrustedContactsHighlightIndex
+        || this.state.trustedContactsHighlightEstablishedAt !== nextTrustedContactsHighlightEstablishedAt
+      ) {
+        this.patch({
+          trustedContactsHighlightIndex: nextTrustedContactsHighlightIndex,
+          trustedContactsHighlightEstablishedAt: nextTrustedContactsHighlightEstablishedAt,
+        });
+      }
       this.persistResumeState({ lastContactIndex: normalized });
       return;
     }
 
     this.patch({
       selectedContactIndex: normalized,
+      trustedContactsHighlightIndex: nextTrustedContactsHighlightIndex,
+      trustedContactsHighlightEstablishedAt: nextTrustedContactsHighlightEstablishedAt,
       activeTranscriptCursor: getLatestTranscriptCursor(this.state.transcript),
       speechWindow: createInitialSpeechWindowState(),
       ...createInitialListeningState(),
@@ -664,8 +680,8 @@ export class AppStore {
     this.persistResumeState({ lastContactIndex: normalized });
   }
 
-  moveContactSelection(direction: -1 | 1) {
-    this.setSelectedContactIndex(this.state.selectedContactIndex + direction);
+  moveContactSelection(direction: -1 | 1, options?: { trustVisibleHighlight?: boolean }) {
+    this.setSelectedContactIndex(this.state.selectedContactIndex + direction, options);
   }
 
   setTurnSendMode(mode: TurnSendMode) {
@@ -782,6 +798,8 @@ export class AppStore {
 
     const basePatch: Partial<AppState> = {
       selectedContactIndex,
+      trustedContactsHighlightIndex: null,
+      trustedContactsHighlightEstablishedAt: null,
       engagedContactIndex: options.screen === 'contacts' ? null : selectedContactIndex,
       speechWindow: createInitialSpeechWindowState(),
       ...createInitialAudioCaptureState(),
@@ -926,6 +944,8 @@ export class AppStore {
     this.patch({
       screen: 'incoming',
       selectedContactIndex,
+      trustedContactsHighlightIndex: null,
+      trustedContactsHighlightEstablishedAt: null,
       engagedContactIndex: selectedContactIndex,
       ...createInitialListeningState(),
       activeActionIndex: 0,
@@ -1195,6 +1215,8 @@ export class AppStore {
       // The Even contacts list does not carry a selected-row value across rebuilds,
       // so returning here visually resets the highlight to the first contact.
       selectedContactIndex: 0,
+      trustedContactsHighlightIndex: null,
+      trustedContactsHighlightEstablishedAt: null,
       engagedContactIndex: null,
       ...createInitialListeningState(),
       activeActionIndex: 0,

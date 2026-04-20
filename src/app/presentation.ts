@@ -58,6 +58,8 @@ export function getVisibleSttDraft(state: Pick<
   'screen'
   | 'listeningMode'
   | 'listeningCaptureState'
+  | 'listeningFailureKind'
+  | 'listeningSessionReachedActiveCapture'
   | 'sttPartialTranscript'
   | 'sttDraftDisplayText'
   | 'sttDraftVisibleUntil'
@@ -77,6 +79,19 @@ export function getVisibleSttDraft(state: Pick<
   );
 
   return partial || (draftGraceActive || listeningDraftPinned ? state.sttDraftDisplayText.trim() : '');
+}
+
+export function isPauseActionable(state: Pick<
+  AppState,
+  'listeningMode'
+  | 'listeningCaptureState'
+  | 'listeningFailureKind'
+  | 'listeningSessionReachedActiveCapture'
+>) {
+  return state.listeningMode === 'capture'
+    && state.listeningCaptureState === 'capturing'
+    && state.listeningSessionReachedActiveCapture
+    && state.listeningFailureKind === null;
 }
 
 export function getTurnSendModeLabel(mode: TurnSendMode) {

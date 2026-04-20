@@ -2,7 +2,7 @@ import { waitForEvenAppBridge, type EvenHubEvent } from '@evenrealities/even_hub
 import { CONTACTS } from '../app/contacts';
 import { AppStore } from '../app/state';
 import { GLASSES_CONTAINERS } from '../glass/shared';
-import { getCodecAssetBytes } from '../codecGlassesAssets';
+import { renderCodecImageBytes } from '../codecGlassesAssets';
 import { InteractionFeedbackManager, type RawInteractionType } from '../interaction-feedback';
 import { AppGlasses } from '../glass/AppGlasses';
 import { EvenInputNormalizer } from './eventNormalizer';
@@ -156,9 +156,9 @@ export class EvenBridgeApp {
   private syncInFlight = false;
   private syncQueuedWhileInFlight = false;
   private syncNeedsForcedImages = false;
-  private lastRenderedPortraitAsset: string | null = null;
-  private lastQueuedPortraitAsset: string | null = null;
-  private lastPortraitSyncAt: number | null = null;
+  private lastRenderedImageSignature: string | null = null;
+  private lastQueuedImageSignature: string | null = null;
+  private lastImageSyncAt: number | null = null;
   private lastSyncedTextContent = '';
   private lastRebuildSignature = '';
   private lastSyncSignature = '';
@@ -199,7 +199,7 @@ export class EvenBridgeApp {
   private readonly fastTurnMinWordCount = 2;
   private readonly fastTurnMinLetterCount = 5;
   private readonly syncDebounceMs = 70;
-  private readonly portraitSyncCooldownMs = 600;
+  private readonly imageSyncCooldownMs = 180;
   private readonly audioMetricThrottleMs = 90;
   private readonly audioDropLogThrottleMs = 1500;
   private readonly sttPartialFlushMs = 70;
@@ -215,7 +215,7 @@ export class EvenBridgeApp {
   private readonly contactsCaptureWarningCooldownMs = 800;
   private suppressSimulatorUnknownTapUntil = 0;
   private bridgeReadyAt: number | null = null;
-  private portraitCooldownTimer: number | null = null;
+  private imageCooldownTimer: number | null = null;
   private outboundAdvanceTimer: number | null = null;
   private launchSourceRecoveryTimer: number | null = null;
   private lastContactsCaptureWarningAt = 0;
@@ -915,9 +915,9 @@ export class EvenBridgeApp {
       window.clearInterval(this.captureProgressTimer);
       this.captureProgressTimer = null;
     }
-    if (this.portraitCooldownTimer !== null) {
-      window.clearTimeout(this.portraitCooldownTimer);
-      this.portraitCooldownTimer = null;
+    if (this.imageCooldownTimer !== null) {
+      window.clearTimeout(this.imageCooldownTimer);
+      this.imageCooldownTimer = null;
     }
     this.clearOutboundAdvanceTimer();
     this.syncInFlight = false;
@@ -926,9 +926,9 @@ export class EvenBridgeApp {
 
     this.normalizer.clear();
     this.imageQueue?.reset();
-    this.lastRenderedPortraitAsset = null;
-    this.lastQueuedPortraitAsset = null;
-    this.lastPortraitSyncAt = null;
+    this.lastRenderedImageSignature = null;
+    this.lastQueuedImageSignature = null;
+    this.lastImageSyncAt = null;
     this.lastSyncedTextContent = '';
     this.lastRebuildSignature = '';
     this.lastSyncSignature = '';
@@ -1355,7 +1355,11 @@ export class EvenBridgeApp {
         }
       }
 
-      const text = this.glasses.getDialogueText();
+      const text = this.glasses.getSyncTextContent();
+      if (text === null) {
+        return;
+      }
+
       if (text === this.lastSyncedTextContent) {
         return;
       }
@@ -1387,64 +1391,74 @@ export class EvenBridgeApp {
       return;
     }
 
-    const portraitAsset = this.glasses.getPortraitAssetKey();
-    if (!portraitAsset) {
-      this.lastQueuedPortraitAsset = null;
-      this.lastRenderedPortraitAsset = null;
+    const imageRequests = this.glasses.getImageRenderRequests();
+    const imageSignature = JSON.stringify(
+      imageRequests.map((request) => ({
+        containerID: request.containerID,
+        containerName: request.containerName,
+        syncKey: request.syncKey,
+      })),
+    );
+
+    if (imageRequests.length === 0) {
+      this.lastQueuedImageSignature = null;
+      this.lastRenderedImageSignature = null;
       return;
     }
 
-    const changed = force || this.lastRenderedPortraitAsset !== portraitAsset;
+    const changed = force || this.lastRenderedImageSignature !== imageSignature;
     if (!changed) {
       return;
     }
 
-    if (!force && this.lastQueuedPortraitAsset === portraitAsset) {
+    if (!force && this.lastQueuedImageSignature === imageSignature) {
       return;
     }
 
     const now = Date.now();
-    const remainingCooldownMs = this.lastPortraitSyncAt === null
+    const remainingCooldownMs = this.lastImageSyncAt === null
       ? 0
-      : this.portraitSyncCooldownMs - (now - this.lastPortraitSyncAt);
+      : this.imageSyncCooldownMs - (now - this.lastImageSyncAt);
     if (!force && remainingCooldownMs > 0) {
-      this.schedulePortraitCooldownSync(remainingCooldownMs);
+      this.scheduleImageCooldownSync(remainingCooldownMs);
       return;
     }
 
     try {
-      const portraitBytes = await getCodecAssetBytes(portraitAsset);
-      this.lastQueuedPortraitAsset = portraitAsset;
-      await this.imageQueue.enqueue({
-        containerID: GLASSES_CONTAINERS.portraitImage.id,
-        containerName: GLASSES_CONTAINERS.portraitImage.name,
-        imageData: portraitBytes,
-      });
+      this.lastQueuedImageSignature = imageSignature;
+      for (const request of imageRequests) {
+        const imageBytes = await renderCodecImageBytes(request.request);
+        await this.imageQueue.enqueue({
+          containerID: request.containerID,
+          containerName: request.containerName,
+          imageData: imageBytes,
+        });
+      }
 
-      this.lastRenderedPortraitAsset = portraitAsset;
-      this.lastPortraitSyncAt = Date.now();
+      this.lastRenderedImageSignature = imageSignature;
+      this.lastImageSyncAt = Date.now();
       this.store.setImageSyncDebug({
-        lastPortraitAsset: portraitAsset,
+        lastPortraitAsset: imageSignature,
         lastResult: 'success',
         lastAt: Date.now(),
       });
     } catch {
-      this.lastQueuedPortraitAsset = null;
+      this.lastQueuedImageSignature = null;
       this.store.setImageSyncDebug({
-        lastPortraitAsset: portraitAsset,
+        lastPortraitAsset: imageSignature,
         lastResult: 'failed',
         lastAt: Date.now(),
       });
     }
   }
 
-  private schedulePortraitCooldownSync(delayMs: number) {
-    if (this.portraitCooldownTimer !== null) {
+  private scheduleImageCooldownSync(delayMs: number) {
+    if (this.imageCooldownTimer !== null) {
       return;
     }
 
-    this.portraitCooldownTimer = window.setTimeout(() => {
-      this.portraitCooldownTimer = null;
+    this.imageCooldownTimer = window.setTimeout(() => {
+      this.imageCooldownTimer = null;
       this.scheduleSync(false);
     }, delayMs + 10);
   }

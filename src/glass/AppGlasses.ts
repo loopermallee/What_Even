@@ -2,9 +2,10 @@ import { CONTACTS } from '../app/contacts';
 import type { AppStore } from '../app/state';
 import type { NormalizedInput, RawEventDebugInfo } from '../app/types';
 import type { BridgePagePayload } from '../bridge/startupLifecycle';
+import type { CodecImageRenderRequest } from '../codecGlassesAssets';
 import { CreateStartUpPageContainer, TextContainerProperty } from '@evenrealities/even_hub_sdk';
-import { selectActionItemsForGlasses, selectDialogueForGlasses, selectGlassPortraitState, selectGlassScreenView } from './selectors';
-import { CONTACTS_LAYOUT, GLASSES_CONTAINERS, type GlassPortraitState } from './shared';
+import { selectActionItemsForGlasses, selectGlassPortraitState, selectGlassScreenView } from './selectors';
+import { GLASSES_CONTAINERS, type GlassPortraitState } from './shared';
 
 export type InputHandleResult = {
   changed: boolean;
@@ -23,12 +24,80 @@ export class AppGlasses {
     return selectGlassScreenView(this.store.getState());
   }
 
-  getPortraitAssetKey() {
-    return this.getView().showPortrait ? this.getView().portraitAsset ?? null : null;
-  }
-
   getPortraitState(): GlassPortraitState {
     return selectGlassPortraitState(this.store.getState());
+  }
+
+  getImageRenderRequests() {
+    const view = this.getView();
+    const requests: Array<{
+      containerID: number;
+      containerName: string;
+      syncKey: string;
+      request: CodecImageRenderRequest;
+    }> = [];
+
+    if (!view.showPortrait) {
+      return requests;
+    }
+
+    const portraitState = this.getPortraitState();
+    const state = this.store.getState();
+    const selectedAction = view.actions[view.selectedActionIndex] ?? null;
+
+    requests.push(
+      {
+        containerID: GLASSES_CONTAINERS.portraitImage.id,
+        containerName: GLASSES_CONTAINERS.portraitImage.name,
+        syncKey: `left:${portraitState.leftPortraitAsset}:${portraitState.leftActive ? 'active' : 'idle'}`,
+        request: {
+          kind: 'portrait-panel',
+          side: 'left',
+          portraitAsset: portraitState.leftPortraitAsset,
+          active: portraitState.leftActive,
+        },
+      },
+      {
+        containerID: GLASSES_CONTAINERS.centerImage.id,
+        containerName: GLASSES_CONTAINERS.centerImage.name,
+        syncKey: JSON.stringify({
+          variant: view.centerModuleVariant,
+          status: view.statusLabel || portraitState.stateLabel,
+          speaker: portraitState.speakerLabel,
+          frequency: portraitState.frequency,
+          subtitles: view.subtitleLines,
+          selectedAction,
+          selectedActionIndex: view.selectedActionIndex,
+          barBucket: portraitState.barBucket,
+          screen: state.screen,
+        }),
+        request: {
+          kind: 'center-module',
+          variant: view.centerModuleVariant,
+          frequency: portraitState.frequency,
+          statusLabel: view.statusLabel || portraitState.stateLabel,
+          speakerLabel: portraitState.speakerLabel,
+          subtitleLines: view.subtitleLines,
+          barBucket: portraitState.barBucket,
+          selectedActionLabel: selectedAction,
+          selectedActionIndex: view.actions.length > 0 ? view.selectedActionIndex : null,
+          selectedActionCount: view.actions.length,
+        },
+      },
+      {
+        containerID: GLASSES_CONTAINERS.rightPortraitImage.id,
+        containerName: GLASSES_CONTAINERS.rightPortraitImage.name,
+        syncKey: `right:${portraitState.rightPortraitAsset}:${portraitState.rightActive ? 'active' : 'idle'}`,
+        request: {
+          kind: 'portrait-panel',
+          side: 'right',
+          portraitAsset: portraitState.rightPortraitAsset,
+          active: portraitState.rightActive,
+        },
+      },
+    );
+
+    return requests;
   }
 
   getActionSeedIndex() {
@@ -36,8 +105,8 @@ export class AppGlasses {
     return view.showActions ? view.selectedActionIndex : null;
   }
 
-  getDialogueText() {
-    return selectDialogueForGlasses(this.store.getState(), this.isCursorVisible());
+  getSyncTextContent() {
+    return null;
   }
 
   getStructuralRebuildSignature() {
@@ -61,10 +130,6 @@ export class AppGlasses {
 
   getCursorBlinkIntervalMs() {
     return this.cursorBlinkIntervalMs;
-  }
-
-  private isCursorVisible() {
-    return Math.floor(Date.now() / this.cursorBlinkIntervalMs) % 2 === 0;
   }
 
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
@@ -104,20 +169,25 @@ export class AppGlasses {
       }
 
       if (input === 'UP') {
-        this.store.moveContactSelection(-1);
+        this.store.moveContactSelection(-1, { trustVisibleHighlight: true });
         return { changed: true, requestClose: false };
       }
 
       if (input === 'DOWN') {
-        this.store.moveContactSelection(1);
+        this.store.moveContactSelection(1, { trustVisibleHighlight: true });
         return { changed: true, requestClose: false };
       }
 
       if (input === 'TAP') {
-        const tappedContactIndex = this.resolveContactsTapSelectionIndex(resolvedSelectionIndex, inspection);
-        if (tappedContactIndex !== null) {
-          this.store.setSelectedContactIndex(tappedContactIndex);
+        const tapResolution = this.resolveContactsTapSelectionIndex(resolvedSelectionIndex, inspection);
+        if (tapResolution.index === null) {
+          this.store.log(
+            `Contacts tap blocked: ${tapResolution.explicitFailureReason}; ${tapResolution.highlightFailureReason}.`
+          );
+          return { changed: false, requestClose: false };
         }
+
+        this.store.setSelectedContactIndex(tapResolution.index, { trustVisibleHighlight: true });
         this.store.goToIncomingForSelectedContact();
         return { changed: true, requestClose: false };
       }
@@ -177,7 +247,12 @@ export class AppGlasses {
         return { changed: false, requestClose: false };
       }
 
-      if (state.listeningMode === 'capture' && state.listeningCaptureState === 'capturing') {
+      if (
+        state.listeningMode === 'capture'
+        && state.listeningCaptureState === 'capturing'
+        && state.listeningSessionReachedActiveCapture
+        && state.listeningFailureKind === null
+      ) {
         if (input === 'TAP') {
           this.store.pauseListeningCapture();
           return { changed: true, requestClose: false };
@@ -316,18 +391,116 @@ export class AppGlasses {
   }
 
   private resolveContactsTapSelectionIndex(resolvedSelectionIndex: number | null, inspection: RawEventDebugInfo) {
-    if (resolvedSelectionIndex !== null) {
+    const explicitTapRowIndex = this.resolveExplicitTrustedContactsTapIndex(inspection);
+    if (explicitTapRowIndex !== null) {
+      return {
+        index: explicitTapRowIndex,
+        source: 'explicit_tap_row' as const,
+        explicitFailureReason: 'explicit tap row resolved',
+        highlightFailureReason: 'trusted visible highlight not needed',
+      };
+    }
+
+    const trustedVisibleHighlightIndex = this.resolveTrustedVisibleContactsHighlightIndex(resolvedSelectionIndex, inspection);
+    if (trustedVisibleHighlightIndex !== null) {
+      return {
+        index: trustedVisibleHighlightIndex,
+        source: 'trusted_visible_highlight' as const,
+        explicitFailureReason: this.describeExplicitTapRowFailure(inspection),
+        highlightFailureReason: 'trusted visible highlight resolved',
+      };
+    }
+
+    return {
+      index: null,
+      source: null,
+      explicitFailureReason: this.describeExplicitTapRowFailure(inspection),
+      highlightFailureReason: this.describeTrustedVisibleHighlightFailure(resolvedSelectionIndex, inspection),
+    };
+  }
+
+  private resolveExplicitTrustedContactsTapIndex(inspection: RawEventDebugInfo) {
+    if (inspection.source !== 'listEvent' || !this.isStatusListInspection(inspection)) {
+      return null;
+    }
+
+    if (inspection.currentSelectItemIndex !== null) {
+      return this.isValidContactsIndex(inspection.currentSelectItemIndex)
+        ? inspection.currentSelectItemIndex
+        : null;
+    }
+
+    if (inspection.currentSelectItemName !== null) {
+      const selectedItemName = inspection.currentSelectItemName.trim();
+      const matchingIndex = CONTACTS.findIndex((contact) => contact.name === selectedItemName);
+      return matchingIndex >= 0 ? matchingIndex : null;
+    }
+
+    return null;
+  }
+
+  private resolveTrustedVisibleContactsHighlightIndex(
+    resolvedSelectionIndex: number | null,
+    inspection: RawEventDebugInfo,
+  ) {
+    if (
+      resolvedSelectionIndex !== null
+      && this.isContactsSelectionInspection(inspection, resolvedSelectionIndex)
+    ) {
       return resolvedSelectionIndex;
     }
 
-    if (
-      inspection.source === 'listEvent' &&
-      this.isStatusListInspection(inspection)
-    ) {
-      return this.store.getState().selectedContactIndex;
+    const state = this.store.getState();
+    if (state.screen !== 'contacts') {
+      return null;
     }
 
-    return this.store.getState().selectedContactIndex;
+    if (state.trustedContactsHighlightIndex === null || state.trustedContactsHighlightEstablishedAt === null) {
+      return null;
+    }
+
+    return this.isValidContactsIndex(state.trustedContactsHighlightIndex)
+      ? state.trustedContactsHighlightIndex
+      : null;
+  }
+
+  private describeExplicitTapRowFailure(inspection: RawEventDebugInfo) {
+    if (inspection.source !== 'listEvent' || !this.isStatusListInspection(inspection)) {
+      return 'explicit tap row unavailable';
+    }
+
+    if (inspection.currentSelectItemIndex !== null || inspection.currentSelectItemName !== null) {
+      return 'explicit tap row invalid';
+    }
+
+    return 'explicit tap row unavailable';
+  }
+
+  private describeTrustedVisibleHighlightFailure(
+    resolvedSelectionIndex: number | null,
+    inspection: RawEventDebugInfo,
+  ) {
+    if (
+      resolvedSelectionIndex !== null
+      && this.isContactsSelectionInspection(inspection, resolvedSelectionIndex)
+    ) {
+      return 'trusted visible highlight unavailable';
+    }
+
+    const state = this.store.getState();
+    if (state.screen !== 'contacts') {
+      return 'trusted visible highlight missing or invalidated';
+    }
+
+    if (state.trustedContactsHighlightIndex === null || state.trustedContactsHighlightEstablishedAt === null) {
+      return 'no trusted visible highlight';
+    }
+
+    if (!this.isValidContactsIndex(state.trustedContactsHighlightIndex)) {
+      return 'trusted visible highlight invalid';
+    }
+
+    return 'trusted visible highlight missing or invalidated';
   }
 
   buildMinimalStartContainer(): BridgePagePayload {
@@ -370,25 +543,24 @@ export class AppGlasses {
   buildTextOnlyRebuildContainer(): BridgePagePayload {
     const view = this.getView();
     const textObject = this.buildTextContainers();
-    const listObject = view.showActions ? [this.buildStatusListContainer()] : [];
+    const listObject = view.captureSurfaceMode === 'list' ? [this.buildStatusListContainer()] : [];
 
     return {
       containerTotalNum: textObject.length + listObject.length,
-      textObject,
+      textObject: textObject.length > 0 ? textObject : undefined,
       listObject: listObject.length > 0 ? listObject : undefined,
     };
   }
 
   buildRebuildContainer(): BridgePagePayload {
-    const view = this.getView();
     const textObject = this.buildTextContainers();
-    const imageObject = view.showPortrait ? [this.buildPortraitImageContainer()] : [];
-    const listObject = view.showActions ? [this.buildStatusListContainer()] : [];
+    const imageObject = this.buildImageContainers();
+    const listObject = this.getView().captureSurfaceMode === 'list' ? [this.buildStatusListContainer()] : [];
 
     return {
       containerTotalNum: textObject.length + imageObject.length + listObject.length,
       imageObject: imageObject.length > 0 ? imageObject : undefined,
-      textObject,
+      textObject: textObject.length > 0 ? textObject : undefined,
       listObject: listObject.length > 0 ? listObject : undefined,
     };
   }
@@ -405,7 +577,7 @@ export class AppGlasses {
         return;
       }
 
-      this.store.setSelectedContactIndex(index);
+      this.store.setSelectedContactIndex(index, { trustVisibleHighlight: true });
       return;
     }
 
@@ -428,95 +600,54 @@ export class AppGlasses {
   }
 
   private buildTextContainers() {
-    const textObject: NonNullable<BridgePagePayload['textObject']> = [this.buildDialogueContainer()];
-    const footer = this.buildFooterContainer();
-
-    if (footer) {
-      textObject.push(footer);
+    const view = this.getView();
+    if (view.captureSurfaceMode !== 'text') {
+      return [];
     }
 
-    return textObject;
+    return [this.buildCaptureTextContainer()];
   }
 
-  private buildDialogueContainer() {
-    const view = this.getView();
-    if (this.store.getState().screen === 'contacts') {
-      return {
-        ...CONTACTS_LAYOUT.panel,
-        containerID: GLASSES_CONTAINERS.dialogueText.id,
-        containerName: GLASSES_CONTAINERS.dialogueText.name,
-        content: view.dialogue,
-        isEventCapture: view.dialogueCapturesInput ? 1 : 0,
-      };
-    }
-
-    const wide = !view.showPortrait;
-    const tall = !view.showActions;
-
+  private buildCaptureTextContainer() {
     return {
-      xPosition: wide ? 24 : 132,
-      yPosition: 38,
-      width: wide ? 322 : 238,
-      height: tall ? 170 : 126,
+      xPosition: 540,
+      yPosition: 264,
+      width: 24,
+      height: 20,
       containerID: GLASSES_CONTAINERS.dialogueText.id,
       containerName: GLASSES_CONTAINERS.dialogueText.name,
-      content: this.getDialogueText(),
-      isEventCapture: view.dialogueCapturesInput ? 1 : 0,
+      content: ' ',
+      isEventCapture: 1,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
     };
   }
 
-  private buildFooterContainer() {
-    const view = this.getView();
-    if (this.store.getState().screen === 'contacts') {
-      return null;
+  private buildImageContainers() {
+    if (!this.getView().showPortrait) {
+      return [];
     }
 
-    if (!view.footerLabel) {
-      return null;
-    }
-
-    return {
-      xPosition: 24,
-      yPosition: 236,
-      width: 528,
-      height: 24,
-      containerID: GLASSES_CONTAINERS.footerText.id,
-      containerName: GLASSES_CONTAINERS.footerText.name,
-      content: view.footerLabel,
-      isEventCapture: 0,
-    };
+    return [
+      this.buildLeftPortraitImageContainer(),
+      this.buildCenterImageContainer(),
+      this.buildRightPortraitImageContainer(),
+    ];
   }
 
   private buildStatusListContainer() {
-    const view = this.getView();
     const actions = this.getActionItems();
-    if (this.store.getState().screen === 'contacts') {
-      return {
-        xPosition: 84,
-        yPosition: 93,
-        width: 408,
-        height: 96,
-        borderWidth: 0,
-        borderColor: 0,
-        borderRadius: 0,
-        paddingLength: 0,
-        containerID: GLASSES_CONTAINERS.statusList.id,
-        containerName: GLASSES_CONTAINERS.statusList.name,
-        itemContainer: {
-          itemCount: actions.length,
-          itemName: actions,
-          itemWidth: 0,
-          isItemSelectBorderEn: 1,
-        },
-        isEventCapture: 1,
-      };
-    }
-
     return {
-      xPosition: view.showPortrait ? 132 : 24,
-      yPosition: view.showPortrait ? 182 : 196,
-      width: view.showPortrait ? 190 : 236,
-      height: 72,
+      xPosition: 204,
+      yPosition: 250,
+      width: 168,
+      height: 28,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
       containerID: GLASSES_CONTAINERS.statusList.id,
       containerName: GLASSES_CONTAINERS.statusList.name,
       itemContainer: {
@@ -529,14 +660,36 @@ export class AppGlasses {
     };
   }
 
-  private buildPortraitImageContainer() {
+  private buildLeftPortraitImageContainer() {
     return {
-      xPosition: 22,
-      yPosition: 42,
-      width: 96,
-      height: 96,
+      xPosition: 18,
+      yPosition: 12,
+      width: 120,
+      height: 132,
       containerID: GLASSES_CONTAINERS.portraitImage.id,
       containerName: GLASSES_CONTAINERS.portraitImage.name,
+    };
+  }
+
+  private buildCenterImageContainer() {
+    return {
+      xPosition: 146,
+      yPosition: 8,
+      width: 284,
+      height: 144,
+      containerID: GLASSES_CONTAINERS.centerImage.id,
+      containerName: GLASSES_CONTAINERS.centerImage.name,
+    };
+  }
+
+  private buildRightPortraitImageContainer() {
+    return {
+      xPosition: 438,
+      yPosition: 12,
+      width: 120,
+      height: 132,
+      containerID: GLASSES_CONTAINERS.rightPortraitImage.id,
+      containerName: GLASSES_CONTAINERS.rightPortraitImage.name,
     };
   }
 

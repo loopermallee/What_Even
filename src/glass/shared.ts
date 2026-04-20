@@ -17,10 +17,12 @@ export type GlassPortraitExpressionBucket = 'default' | 'alert';
 export const GLASSES_CONTAINERS = {
   startupHeaderText: { id: 91, name: 'boot-head' },
   startupBodyText: { id: 92, name: 'boot-body' },
-  portraitImage: { id: 101, name: 'codec-face' },
+  portraitImage: { id: 101, name: 'codec-left' },
   dialogueText: { id: 102, name: 'codec-dialog' },
   statusList: { id: 103, name: 'codec-status' },
   footerText: { id: 104, name: 'codec-footer' },
+  centerImage: { id: 105, name: 'codec-core' },
+  rightPortraitImage: { id: 106, name: 'codec-user' },
 } as const;
 
 // Keep this tunable: perceived fit can differ a bit between the simulator and real G2 hardware.
@@ -36,10 +38,13 @@ export const CONTACTS_LAYOUT = {
   },
 } as const;
 
+export type GlassCenterModuleVariant = 'directory' | 'incoming' | 'listening' | 'active' | 'ended' | 'debug';
+export type GlassActionMode = 'hidden-list' | 'tap-only' | 'none';
+export type GlassCaptureSurfaceMode = 'list' | 'text' | 'none';
+
 export type GlassScreenView = {
   screenLabel: string;
   statusLabel: string;
-  portraitAsset?: PortraitAsset | null;
   dialogue: string;
   footerLabel?: string;
   actions: string[];
@@ -49,15 +54,27 @@ export type GlassScreenView = {
   showPortrait: boolean;
   showActions: boolean;
   dialogueCapturesInput?: boolean;
+  centerModuleVariant: GlassCenterModuleVariant;
+  subtitleLines: string[];
+  actionMode: GlassActionMode;
+  captureSurfaceMode: GlassCaptureSurfaceMode;
 };
 
 export type GlassPortraitState = {
-  portraitAsset: PortraitAsset;
-  portraitAssetBase: PortraitAssetBase;
-  expressionBucket: GlassPortraitExpressionBucket;
+  leftPortraitAsset: PortraitAsset;
+  rightPortraitAsset: PortraitAsset;
+  leftPortraitBase: PortraitAssetBase;
+  rightPortraitBase: PortraitAssetBase;
+  leftExpressionBucket: GlassPortraitExpressionBucket;
+  rightExpressionBucket: GlassPortraitExpressionBucket;
   speakerSide: SpeakerSide | null;
   isTalking: boolean;
+  leftActive: boolean;
+  rightActive: boolean;
   barBucket: number;
+  stateLabel: string;
+  speakerLabel: string;
+  frequency: string;
   syncKey: string;
 };
 
@@ -223,6 +240,12 @@ export function getSelectedContact(state: AppState) {
   return getCurrentContact(state);
 }
 
+export function toSubtitleLines(content: string, maxCharsPerLine = 30, maxLines = 2) {
+  return wrapTextLines(normalizeCodecText(content), maxCharsPerLine)
+    .filter(Boolean)
+    .slice(0, maxLines);
+}
+
 function getPortraitAssetForCharacterId(characterId: CodecCharacterId): PortraitAssetBase {
   if (characterId === 'colonel') {
     return 'portrait-colonel';
@@ -264,7 +287,7 @@ export function getPortraitAssetForContactName(name: string): PortraitAssetBase 
 }
 
 export function getPortraitAssetForState(state: AppState): PortraitAsset {
-  return resolveGlassPortraitState(state).portraitAsset;
+  return resolveGlassPortraitState(state).leftPortraitAsset;
 }
 
 export function getCurrentSpeakerName(state: AppState) {
@@ -333,23 +356,15 @@ function clampBarBucket(bucket: number) {
   return Math.max(0, Math.min(10, Math.round(bucket)));
 }
 
-function getGlassPortraitBase(state: AppState, speakerSide: SpeakerSide | null) {
-  if (speakerSide === 'right') {
-    return 'portrait-snake' as PortraitAssetBase;
-  }
-
-  const contact = getSelectedContact(state);
-  return getPortraitAssetForCharacterId(contact.characterId);
-}
-
 export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
   const scene = resolveCodecPortraitState(state);
-  const portraitAssetBase = getGlassPortraitBase(state, scene.activeSpeakerSide);
-  const activeFamily = scene.activeSpeakerSide === 'right'
-    ? scene.right.family
-    : scene.left.family;
-  const expressionBucket = toGlassExpressionBucket(activeFamily);
-  const portraitAsset = appendExpressionBucketToAsset(portraitAssetBase, expressionBucket);
+  const contact = getSelectedContact(state);
+  const leftPortraitBase = getPortraitAssetForCharacterId(contact.characterId);
+  const rightPortraitBase = 'portrait-snake' as PortraitAssetBase;
+  const leftExpressionBucket = toGlassExpressionBucket(scene.left.family);
+  const rightExpressionBucket = toGlassExpressionBucket(scene.right.family);
+  const leftPortraitAsset = appendExpressionBucketToAsset(leftPortraitBase, leftExpressionBucket);
+  const rightPortraitAsset = appendExpressionBucketToAsset(rightPortraitBase, rightExpressionBucket);
   const isTalking = scene.talkingMode !== 'silent' && scene.currentRole !== 'system';
   const liveAudioBucket = clampBarBucket(3 + Math.round(scene.listeningActivityLevel * 5));
   const barBucket = scene.talkingMode === 'live_audio'
@@ -357,12 +372,20 @@ export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
     : clampBarBucket(scene.signalBarBase + (isTalking ? 1 : 0));
 
   return {
-    portraitAsset,
-    portraitAssetBase,
-    expressionBucket,
+    leftPortraitAsset,
+    rightPortraitAsset,
+    leftPortraitBase,
+    rightPortraitBase,
+    leftExpressionBucket,
+    rightExpressionBucket,
     speakerSide: scene.activeSpeakerSide,
     isTalking,
+    leftActive: scene.left.active,
+    rightActive: scene.right.active,
     barBucket,
-    syncKey: `${portraitAsset}:${scene.activeSpeakerSide ?? 'none'}`,
+    stateLabel: scene.stateLabel,
+    speakerLabel: scene.speakerLabel,
+    frequency: contact.frequency,
+    syncKey: `${leftPortraitAsset}:${rightPortraitAsset}:${scene.activeSpeakerSide ?? 'none'}:${barBucket}:${scene.stateLabel}`,
   };
 }

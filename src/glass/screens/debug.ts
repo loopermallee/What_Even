@@ -1,13 +1,17 @@
 import type { AppState } from '../../app/types';
-import { wrapText, type GlassScreenView } from '../shared';
+import { toSubtitleLines, wrapText, type GlassScreenView } from '../shared';
 
 export function buildDebugScreen(state: AppState): GlassScreenView {
   const raw = state.lastRawEvent;
+  const subtitleLines = toSubtitleLines(
+    `Input ${state.lastNormalizedInput ?? 'none'}. Raw ${(raw?.rawEventTypeName ?? 'none').slice(0, 24)}.`,
+    30,
+    2,
+  );
 
   return {
     screenLabel: 'DEBUG',
     statusLabel: 'DEV ONLY',
-    portraitAsset: null,
     dialogue: wrapText([
       `SCREEN ${state.screenBeforeDebug.toUpperCase()}`,
       `INPUT ${state.lastNormalizedInput ?? 'NONE'}`,
@@ -18,7 +22,11 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
     selectedActionIndex: 0,
     mode: 'compact',
     liveLineKind: 'none',
-    showPortrait: false,
+    showPortrait: true,
     showActions: true,
+    centerModuleVariant: 'debug',
+    subtitleLines,
+    actionMode: 'hidden-list',
+    captureSurfaceMode: 'list',
   };
 }

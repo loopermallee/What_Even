@@ -165,6 +165,8 @@ export type AppState = {
   simulatorSessionDetected: boolean;
   evenNativeHostDetected: boolean;
   selectedContactIndex: number;
+  trustedContactsHighlightIndex: number | null;
+  trustedContactsHighlightEstablishedAt: number | null;
   engagedContactIndex: number | null;
   turnSendMode: TurnSendMode;
   listeningActionIndex: number;

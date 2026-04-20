@@ -1,17 +1,22 @@
 import type { AppState } from '../../app/types';
-import { wrapText, type GlassScreenView } from '../shared';
+import { toSubtitleLines, wrapText, type GlassScreenView } from '../shared';
 
 export function buildEndedScreen(_state: AppState): GlassScreenView {
+  const subtitleLines = toSubtitleLines('Transmission complete. Tap return to directory.', 30, 2);
+
   return {
     screenLabel: '',
     statusLabel: '',
-    portraitAsset: null,
     dialogue: wrapText('Transmission ended.', 27, 1),
     actions: ['RETURN'],
     selectedActionIndex: 0,
     mode: 'compact',
     liveLineKind: 'none',
-    showPortrait: false,
+    showPortrait: true,
     showActions: true,
+    centerModuleVariant: 'ended',
+    subtitleLines,
+    actionMode: 'hidden-list',
+    captureSurfaceMode: 'list',
   };
 }

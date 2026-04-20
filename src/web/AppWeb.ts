@@ -780,12 +780,19 @@ export class AppWeb {
     const listeningFailureActive = state.screen === 'listening' && state.listeningFailureKind === 'speech_unavailable';
     const isSpeaking = animationFrame.talkingMode !== 'silent';
     const turnSendModeLabel = getTurnSendModeLabel(state.turnSendMode);
+    const listeningPreActiveCapture = state.screen === 'listening'
+      && state.listeningMode === 'capture'
+      && state.listeningCaptureState === 'capturing'
+      && !state.listeningSessionReachedActiveCapture
+      && state.listeningFailureKind === null;
     const surfaceMode = state.screen === 'contacts'
       ? 'Memory selector'
       : state.screen === 'incoming'
         ? 'Outbound handshake'
         : state.screen === 'listening'
-          ? listeningFailureActive
+          ? listeningPreActiveCapture
+            ? 'Speech standby'
+            : listeningFailureActive
             ? 'Speech unavailable'
             : state.listeningMode === 'review'
               ? 'Review text'
