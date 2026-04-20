@@ -8,16 +8,19 @@ function formatContactActionLabels() {
 
 export function buildContactsScreen(state: AppState): GlassScreenView {
   const selectedContact = CONTACTS[state.selectedContactIndex] ?? CONTACTS[0];
-  const subtitleLines = toSubtitleLines(
+  const subtitleText = toSubtitleLines(
     `${selectedContact.name.toUpperCase()} ${selectedContact.frequency}. Swipe to select. Tap to dial.`,
     30,
     2,
-  );
+  ).join('\n');
 
   return {
     screenLabel: 'Codec Directory',
     statusLabel: 'DIRECTORY',
-    dialogue: subtitleLines.join('\n'),
+    dialogue: subtitleText,
+    topRowText: `${selectedContact.name.toUpperCase()}  ${selectedContact.frequency}  DIRECTORY`,
+    centerReadoutText: `FREQ ${selectedContact.frequency}`,
+    subtitleText,
     actions: formatContactActionLabels(),
     selectedActionIndex: state.selectedContactIndex,
     mode: 'compact',
@@ -26,7 +29,6 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
     showActions: true,
     dialogueCapturesInput: false,
     centerModuleVariant: 'directory',
-    subtitleLines,
     actionMode: 'hidden-list',
     captureSurfaceMode: 'list',
   };

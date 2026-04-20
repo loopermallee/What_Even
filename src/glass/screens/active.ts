@@ -17,17 +17,18 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     ? 'You'
     : contact.name;
   const line = focusedEntry?.text ?? 'Standing by.';
+  const statusLabel = getResponseStatusLabel(state.responseStatusPhase).toUpperCase();
   const mode = shouldUseReadMode({
     label: speakerLabel,
     text: line,
   })
     ? 'read'
     : 'compact';
-  const subtitleLines = toSubtitleLines(`${speakerLabel}: ${line}`, 30, 2);
+  const subtitleText = toSubtitleLines(`${speakerLabel}: ${line}`, 30, 2).join('\n');
 
   return {
     screenLabel: '',
-    statusLabel: getResponseStatusLabel(state.responseStatusPhase).toUpperCase(),
+    statusLabel,
     dialogue: mode === 'read'
       ? formatGlassSpeakerLine({
         label: speakerLabel,
@@ -35,6 +36,9 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
         maxLines: 6,
       })
       : wrapText(formatGlassSpeakerLine({ label: speakerLabel, text: line, maxLines: 4 }), 27, 4),
+    topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  ${statusLabel}`,
+    centerReadoutText: `FREQ ${contact.frequency}`,
+    subtitleText,
     actions: ['NEXT'],
     selectedActionIndex: state.activeActionIndex,
     mode,
@@ -42,7 +46,6 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     showPortrait: true,
     showActions: true,
     centerModuleVariant: 'active',
-    subtitleLines,
     actionMode: 'hidden-list',
     captureSurfaceMode: 'list',
   };

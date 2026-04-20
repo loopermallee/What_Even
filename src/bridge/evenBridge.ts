@@ -159,7 +159,7 @@ export class EvenBridgeApp {
   private lastRenderedImageSignature: string | null = null;
   private lastQueuedImageSignature: string | null = null;
   private lastImageSyncAt: number | null = null;
-  private lastSyncedTextContent = '';
+  private readonly lastSyncedTextByContainer = new Map<string, string>();
   private lastRebuildSignature = '';
   private lastSyncSignature = '';
   private lastQueuedScreen: string | null = null;
@@ -929,7 +929,7 @@ export class EvenBridgeApp {
     this.lastRenderedImageSignature = null;
     this.lastQueuedImageSignature = null;
     this.lastImageSyncAt = null;
-    this.lastSyncedTextContent = '';
+    this.lastSyncedTextByContainer.clear();
     this.lastRebuildSignature = '';
     this.lastSyncSignature = '';
     this.lastQueuedScreen = null;
@@ -1355,29 +1355,56 @@ export class EvenBridgeApp {
         }
       }
 
-      const text = this.glasses.getSyncTextContent();
-      if (text === null) {
+      const textUpdates = this.glasses.getTextRenderRequests();
+      if (textUpdates.length === 0) {
+        this.lastSyncedTextByContainer.clear();
         return;
       }
 
-      if (text === this.lastSyncedTextContent) {
-        return;
+      const activeKeys = new Set<string>();
+      let anyChangeAttempted = false;
+      let allSucceeded = true;
+
+      for (const update of textUpdates) {
+        const key = `${update.containerID}:${update.containerName}`;
+        activeKeys.add(key);
+        const normalizedContent = update.content || ' ';
+        const previousContent = this.lastSyncedTextByContainer.get(key);
+
+        // After a rebuild we treat the current content as baseline and avoid an immediate redundant upgrade.
+        if (previousContent === undefined) {
+          this.lastSyncedTextByContainer.set(key, normalizedContent);
+          continue;
+        }
+
+        if (previousContent === normalizedContent) {
+          continue;
+        }
+
+        anyChangeAttempted = true;
+        const ok = await this.bridge.textContainerUpgrade({
+          containerID: update.containerID,
+          containerName: update.containerName,
+          contentOffset: 0,
+          contentLength: Math.max(previousContent.length, normalizedContent.length, 1),
+          content: normalizedContent,
+        } as any);
+
+        if (ok) {
+          this.lastSyncedTextByContainer.set(key, normalizedContent);
+        } else {
+          allSucceeded = false;
+        }
       }
 
-      const dialogueUpdate = {
-        containerID: GLASSES_CONTAINERS.dialogueText.id,
-        containerName: GLASSES_CONTAINERS.dialogueText.name,
-        contentOffset: 0,
-        contentLength: 1000,
-        content: text,
-      };
-
-      const ok = await this.bridge.textContainerUpgrade(dialogueUpdate as any);
-      if (ok) {
-        this.lastSyncedTextContent = text;
+      for (const cachedKey of [...this.lastSyncedTextByContainer.keys()]) {
+        if (!activeKeys.has(cachedKey)) {
+          this.lastSyncedTextByContainer.delete(cachedKey);
+        }
       }
-      if (!options?.quiet) {
-        this.store.log(ok ? 'Text synced to Even.' : 'Text sync failed.');
+
+      if (!options?.quiet && anyChangeAttempted) {
+        this.store.log(allSucceeded ? 'Text synced to Even.' : 'Text sync failed.');
       }
     } catch (error) {
       if (!options?.quiet) {

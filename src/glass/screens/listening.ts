@@ -3,6 +3,7 @@ import type { AppState, TranscriptEntry } from '../../app/types';
 import { DEBUG_STT_COUNTDOWN } from '../../bridge/audio';
 import {
   formatGlassSpeakerLine,
+  getSelectedContact,
   getLatestTranscriptEntryByRole,
   getWrappedWindow,
   toSubtitleLines,
@@ -124,6 +125,7 @@ function getPendingUserEntry(state: AppState): TranscriptEntry | null {
 }
 
 export function buildListeningScreen(state: AppState): GlassScreenView {
+  const contact = getSelectedContact(state);
   const { visibleDraft } = getVisibleDraft(state);
   const pendingUserEntry = getPendingUserEntry(state);
   const capturedText = pendingUserEntry?.text ?? visibleDraft;
@@ -136,17 +138,22 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     });
 
   if (state.listeningFailureKind === 'speech_unavailable') {
+    const speechUnavailableDialogue = buildSpeechUnavailableDialogue(state);
     const actionWindow = getWrappedWindow({
-      content: buildSpeechUnavailableDialogue(state),
+      content: speechUnavailableDialogue,
       maxCharsPerLine: 27,
       maxLines: 3,
       offset: Number.MAX_SAFE_INTEGER,
     });
+    const subtitleText = toSubtitleLines(speechUnavailableDialogue, 30, 2).join('\n');
 
     return {
       screenLabel: '',
       statusLabel: '',
       dialogue: actionWindow.text,
+      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  LISTEN`,
+      centerReadoutText: 'SPEECH OFFLINE',
+      subtitleText,
       actions: ['Retry', 'Back'],
       selectedActionIndex: Math.min(state.listeningActionIndex, 1),
       mode: 'compact',
@@ -154,7 +161,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       showPortrait: true,
       showActions: true,
       centerModuleVariant: 'listening',
-      subtitleLines: toSubtitleLines(buildSpeechUnavailableDialogue(state), 30, 2),
       actionMode: 'hidden-list',
       captureSurfaceMode: 'list',
     };
@@ -170,11 +176,15 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     const actions = capturedText
       ? ['RESUME', 'TRANSMIT', 'Retry']
       : ['RESUME', 'Retry'];
+    const subtitleText = toSubtitleLines(reviewContent, 30, 2).join('\n');
 
     return {
       screenLabel: '',
       statusLabel: '',
       dialogue: actionWindow.text,
+      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  REVIEW`,
+      centerReadoutText: actions[state.listeningActionIndex] ?? actions[0],
+      subtitleText,
       actions,
       selectedActionIndex: Math.min(state.listeningActionIndex, actions.length - 1),
       mode: 'compact',
@@ -182,7 +192,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       showPortrait: true,
       showActions: true,
       centerModuleVariant: 'listening',
-      subtitleLines: toSubtitleLines(reviewContent, 30, 2),
       actionMode: 'hidden-list',
       captureSurfaceMode: 'list',
     };
@@ -195,11 +204,15 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       maxLines: 3,
       offset: Number.MAX_SAFE_INTEGER,
     });
+    const subtitleText = toSubtitleLines(reviewContent, 30, 2).join('\n');
 
     return {
       screenLabel: '',
       statusLabel: '',
       dialogue: actionWindow.text,
+      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  REVIEW`,
+      centerReadoutText: 'TRANSMIT READY',
+      subtitleText,
       actions: ['TRANSMIT', 'Retry'],
       selectedActionIndex: Math.min(state.listeningActionIndex, 1),
       mode: 'compact',
@@ -207,7 +220,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       showPortrait: true,
       showActions: true,
       centerModuleVariant: 'listening',
-      subtitleLines: toSubtitleLines(reviewContent, 30, 2),
       actionMode: 'hidden-list',
       captureSurfaceMode: 'list',
     };
@@ -218,10 +230,16 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     state.listeningCaptureState === 'capturing' &&
     !state.listeningSessionReachedActiveCapture
   ) {
+    const connectingDialogue = buildConnectingDialogue();
+    const subtitleText = toSubtitleLines(connectingDialogue, 30, 2).join('\n');
+
     return {
       screenLabel: '',
       statusLabel: '',
-      dialogue: buildConnectingDialogue(),
+      dialogue: connectingDialogue,
+      topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  LISTEN`,
+      centerReadoutText: 'CONNECTING',
+      subtitleText,
       actions: [],
       selectedActionIndex: 0,
       mode: 'compact',
@@ -229,18 +247,21 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       showPortrait: true,
       showActions: false,
       centerModuleVariant: 'listening',
-      subtitleLines: toSubtitleLines(buildConnectingDialogue(), 30, 2),
       actionMode: 'tap-only',
       captureSurfaceMode: 'text',
     };
   }
 
   const captureDialogue = buildCaptureDialogue(state, visibleDraft);
+  const subtitleText = toSubtitleLines(captureDialogue, 30, 2).join('\n');
 
   return {
     screenLabel: '',
     statusLabel: '',
     dialogue: captureDialogue,
+    topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  CAPTURE`,
+    centerReadoutText: state.listeningSessionReachedActiveCapture ? 'REC ON' : 'REC WAIT',
+    subtitleText,
     actions: [],
     selectedActionIndex: 0,
     mode: 'compact',
@@ -249,7 +270,6 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     showActions: false,
     dialogueCapturesInput: true,
     centerModuleVariant: 'listening',
-    subtitleLines: toSubtitleLines(captureDialogue, 30, 2),
     actionMode: 'tap-only',
     captureSurfaceMode: 'text',
     footerLabel: isPauseActionable(state) ? 'Tap: Pause' : undefined,

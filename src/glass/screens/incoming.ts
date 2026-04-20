@@ -3,12 +3,15 @@ import { getSelectedContact, toSubtitleLines, type GlassScreenView } from '../sh
 
 export function buildIncomingScreen(state: AppState): GlassScreenView {
   const contact = getSelectedContact(state);
-  const subtitleLines = toSubtitleLines('Secure transmission handshake. Link stabilizing.', 30, 2);
+  const subtitleText = toSubtitleLines('Secure transmission handshake. Link stabilizing.', 30, 2).join('\n');
 
   return {
     screenLabel: `Transmitting ${contact.name}...`,
     statusLabel: 'Securing transmission.',
-    dialogue: subtitleLines.join('\n'),
+    dialogue: subtitleText,
+    topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  TRANSMIT`,
+    centerReadoutText: `FREQ ${contact.frequency}`,
+    subtitleText,
     actions: [],
     selectedActionIndex: 0,
     mode: 'compact',
@@ -17,7 +20,6 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
     showActions: false,
     dialogueCapturesInput: true,
     centerModuleVariant: 'incoming',
-    subtitleLines,
     actionMode: 'tap-only',
     captureSurfaceMode: 'text',
   };

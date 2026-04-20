@@ -23,6 +23,8 @@ export const GLASSES_CONTAINERS = {
   footerText: { id: 104, name: 'codec-footer' },
   centerImage: { id: 105, name: 'codec-core' },
   rightPortraitImage: { id: 106, name: 'codec-user' },
+  topRowText: { id: 107, name: 'codec-top' },
+  centerReadoutText: { id: 108, name: 'codec-read' },
 } as const;
 
 // Keep this tunable: perceived fit can differ a bit between the simulator and real G2 hardware.
@@ -47,6 +49,9 @@ export type GlassScreenView = {
   statusLabel: string;
   dialogue: string;
   footerLabel?: string;
+  topRowText: string;
+  centerReadoutText: string;
+  subtitleText: string;
   actions: string[];
   selectedActionIndex: number;
   mode: GlassPresentationMode;
@@ -55,7 +60,6 @@ export type GlassScreenView = {
   showActions: boolean;
   dialogueCapturesInput?: boolean;
   centerModuleVariant: GlassCenterModuleVariant;
-  subtitleLines: string[];
   actionMode: GlassActionMode;
   captureSurfaceMode: GlassCaptureSurfaceMode;
 };

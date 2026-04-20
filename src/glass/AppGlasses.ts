@@ -42,8 +42,6 @@ export class AppGlasses {
     }
 
     const portraitState = this.getPortraitState();
-    const state = this.store.getState();
-    const selectedAction = view.actions[view.selectedActionIndex] ?? null;
 
     requests.push(
       {
@@ -62,26 +60,12 @@ export class AppGlasses {
         containerName: GLASSES_CONTAINERS.centerImage.name,
         syncKey: JSON.stringify({
           variant: view.centerModuleVariant,
-          status: view.statusLabel || portraitState.stateLabel,
-          speaker: portraitState.speakerLabel,
-          frequency: portraitState.frequency,
-          subtitles: view.subtitleLines,
-          selectedAction,
-          selectedActionIndex: view.selectedActionIndex,
           barBucket: portraitState.barBucket,
-          screen: state.screen,
         }),
         request: {
           kind: 'center-module',
           variant: view.centerModuleVariant,
-          frequency: portraitState.frequency,
-          statusLabel: view.statusLabel || portraitState.stateLabel,
-          speakerLabel: portraitState.speakerLabel,
-          subtitleLines: view.subtitleLines,
           barBucket: portraitState.barBucket,
-          selectedActionLabel: selectedAction,
-          selectedActionIndex: view.actions.length > 0 ? view.selectedActionIndex : null,
-          selectedActionCount: view.actions.length,
         },
       },
       {
@@ -105,8 +89,26 @@ export class AppGlasses {
     return view.showActions ? view.selectedActionIndex : null;
   }
 
-  getSyncTextContent() {
-    return null;
+  getTextRenderRequests() {
+    const view = this.getView();
+
+    return [
+      {
+        containerID: GLASSES_CONTAINERS.topRowText.id,
+        containerName: GLASSES_CONTAINERS.topRowText.name,
+        content: view.topRowText || ' ',
+      },
+      {
+        containerID: GLASSES_CONTAINERS.centerReadoutText.id,
+        containerName: GLASSES_CONTAINERS.centerReadoutText.name,
+        content: view.centerReadoutText || ' ',
+      },
+      {
+        containerID: GLASSES_CONTAINERS.dialogueText.id,
+        containerName: GLASSES_CONTAINERS.dialogueText.name,
+        content: view.subtitleText || ' ',
+      },
+    ];
   }
 
   getStructuralRebuildSignature() {
@@ -600,29 +602,11 @@ export class AppGlasses {
   }
 
   private buildTextContainers() {
-    const view = this.getView();
-    if (view.captureSurfaceMode !== 'text') {
-      return [];
-    }
-
-    return [this.buildCaptureTextContainer()];
-  }
-
-  private buildCaptureTextContainer() {
-    return {
-      xPosition: 540,
-      yPosition: 264,
-      width: 24,
-      height: 20,
-      containerID: GLASSES_CONTAINERS.dialogueText.id,
-      containerName: GLASSES_CONTAINERS.dialogueText.name,
-      content: ' ',
-      isEventCapture: 1,
-      borderWidth: 0,
-      borderColor: 0,
-      borderRadius: 0,
-      paddingLength: 0,
-    };
+    return [
+      this.buildTopRowTextContainer(),
+      this.buildCenterReadoutTextContainer(),
+      this.buildSubtitleTextContainer(),
+    ];
   }
 
   private buildImageContainers() {
@@ -639,11 +623,12 @@ export class AppGlasses {
 
   private buildStatusListContainer() {
     const actions = this.getActionItems();
+    const safeActions = actions.length > 0 ? actions : [' '];
     return {
-      xPosition: 204,
-      yPosition: 250,
-      width: 168,
-      height: 28,
+      xPosition: 196,
+      yPosition: 252,
+      width: 184,
+      height: 30,
       borderWidth: 0,
       borderColor: 0,
       borderRadius: 0,
@@ -651,12 +636,66 @@ export class AppGlasses {
       containerID: GLASSES_CONTAINERS.statusList.id,
       containerName: GLASSES_CONTAINERS.statusList.name,
       itemContainer: {
-        itemCount: actions.length,
-        itemName: actions,
+        itemCount: safeActions.length,
+        itemName: safeActions,
         itemWidth: 0,
         isItemSelectBorderEn: 1,
       },
       isEventCapture: 1,
+    };
+  }
+
+  private buildTopRowTextContainer() {
+    const view = this.getView();
+    return {
+      xPosition: 20,
+      yPosition: 0,
+      width: 536,
+      height: 22,
+      containerID: GLASSES_CONTAINERS.topRowText.id,
+      containerName: GLASSES_CONTAINERS.topRowText.name,
+      content: view.topRowText || ' ',
+      isEventCapture: 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
+    };
+  }
+
+  private buildCenterReadoutTextContainer() {
+    const view = this.getView();
+    return {
+      xPosition: 184,
+      yPosition: 94,
+      width: 208,
+      height: 28,
+      containerID: GLASSES_CONTAINERS.centerReadoutText.id,
+      containerName: GLASSES_CONTAINERS.centerReadoutText.name,
+      content: view.centerReadoutText || ' ',
+      isEventCapture: 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
+    };
+  }
+
+  private buildSubtitleTextContainer() {
+    const view = this.getView();
+    return {
+      xPosition: 36,
+      yPosition: 170,
+      width: 504,
+      height: 80,
+      containerID: GLASSES_CONTAINERS.dialogueText.id,
+      containerName: GLASSES_CONTAINERS.dialogueText.name,
+      content: view.subtitleText || ' ',
+      isEventCapture: view.captureSurfaceMode === 'text' ? 1 : 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
     };
   }
 

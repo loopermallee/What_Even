@@ -15,14 +15,7 @@ export type CodecImageRenderRequest =
   | {
     kind: 'center-module';
     variant: GlassCenterModuleVariant;
-    frequency: string;
-    statusLabel: string;
-    speakerLabel: string;
-    subtitleLines: string[];
     barBucket: number;
-    selectedActionLabel: string | null;
-    selectedActionIndex: number | null;
-    selectedActionCount: number;
   };
 
 const assetCache = new Map<string, Uint8Array>();
@@ -138,29 +131,6 @@ function drawFrameGlow(context: CanvasRenderingContext2D, width: number, height:
   context.restore();
 }
 
-function drawGlowText(
-  context: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  options: {
-    font: string;
-    color?: string;
-    align?: CanvasTextAlign;
-    shadowBlur?: number;
-  },
-) {
-  context.save();
-  context.font = options.font;
-  context.textAlign = options.align ?? 'left';
-  context.textBaseline = 'alphabetic';
-  context.fillStyle = options.color ?? '#b4ff73';
-  context.shadowColor = options.color ?? '#b4ff73';
-  context.shadowBlur = options.shadowBlur ?? 8;
-  context.fillText(text, x, y);
-  context.restore();
-}
-
 async function renderPortraitPanelBytes(request: Extract<CodecImageRenderRequest, { kind: 'portrait-panel' }>) {
   const definition = getPortraitDefinition(request.portraitAsset, request.side);
   const resolvedFrame = getCodecPortraitFrameWithFallback({
@@ -227,23 +197,6 @@ async function renderPortraitPanelBytes(request: Extract<CodecImageRenderRequest
   return canvasToPngBytes(canvas);
 }
 
-function getVariantAccent(variant: GlassCenterModuleVariant) {
-  if (variant === 'incoming') {
-    return 'LINK';
-  }
-  if (variant === 'ended') {
-    return 'DONE';
-  }
-  if (variant === 'directory') {
-    return 'CALL';
-  }
-  if (variant === 'debug') {
-    return 'DIAG';
-  }
-
-  return 'MEMORY';
-}
-
 function drawSignalBars(context: CanvasRenderingContext2D, level: number) {
   const clamped = Math.max(0, Math.min(10, Math.round(level)));
   const bars = 7;
@@ -303,31 +256,12 @@ async function renderCenterModuleBytes(request: Extract<CodecImageRenderRequest,
   context.strokeRect(113, 2, 58, 18);
   context.strokeRect(106, 109, 72, 18);
 
-  drawGlowText(context, 'PTT', 142, 16, {
-    font: '700 12px monospace',
-    align: 'center',
-    color: stroke,
-    shadowBlur: 8,
-  });
-  drawGlowText(context, getVariantAccent(request.variant), 142, 123, {
-    font: '700 11px monospace',
-    align: 'center',
-    color: stroke,
-    shadowBlur: 8,
-  });
-
   context.fillStyle = '#08110d';
   context.fillRect(70, 30, 144, 48);
   context.strokeStyle = stroke;
   context.strokeRect(70, 30, 144, 48);
 
   drawSignalBars(context, request.barBucket);
-  drawGlowText(context, request.frequency, 200, 68, {
-    font: '700 32px monospace',
-    align: 'right',
-    color: '#dbffeb',
-    shadowBlur: 14,
-  });
 
   context.fillStyle = 'rgba(114,255,173,0.3)';
   context.beginPath();
@@ -342,39 +276,6 @@ async function renderCenterModuleBytes(request: Extract<CodecImageRenderRequest,
   context.lineTo(250, 64);
   context.closePath();
   context.fill();
-
-  drawGlowText(context, request.statusLabel.toUpperCase(), 12, 102, {
-    font: '700 12px monospace',
-    color: stroke,
-    shadowBlur: 8,
-  });
-  drawGlowText(context, request.speakerLabel.toUpperCase(), 272, 102, {
-    font: '700 12px monospace',
-    align: 'right',
-    color: stroke,
-    shadowBlur: 8,
-  });
-
-  const subtitleLines = request.subtitleLines.slice(0, 2);
-  subtitleLines.forEach((line, index) => {
-    drawGlowText(context, line.toUpperCase(), 12, 124 + index * 14, {
-      font: index === 0 ? '700 12px monospace' : '600 11px monospace',
-      color: index === 0 ? '#edfef4' : '#b7f5cb',
-      shadowBlur: 8,
-    });
-  });
-
-  if (request.selectedActionLabel) {
-    const suffix = request.selectedActionCount > 0 && request.selectedActionIndex !== null
-      ? ` ${request.selectedActionIndex + 1}/${request.selectedActionCount}`
-      : '';
-    drawGlowText(context, `${request.selectedActionLabel.toUpperCase()}${suffix}`, 272, 136, {
-      font: '700 10px monospace',
-      align: 'right',
-      color: '#8bf8a9',
-      shadowBlur: 8,
-    });
-  }
 
   return canvasToPngBytes(canvas);
 }
