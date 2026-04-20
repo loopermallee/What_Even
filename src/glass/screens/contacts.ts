@@ -20,7 +20,7 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
     statusLabel: 'DIRECTORY',
     dialogue: subtitleText,
     topRowText: ' ',
-    centerReadoutText: `FREQ ${selectedContact.frequency}`,
+    centerReadoutText: `${selectedContact.name.toUpperCase()} ${selectedContact.frequency}`,
     subtitleText,
     centerTopLabelText: 'PTT',
     centerBottomLabelText: 'MEMORY',
