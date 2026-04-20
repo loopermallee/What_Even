@@ -11,7 +11,7 @@ type ImageUpdater = (request: ImageUpdateRequest) => Promise<ImageRawDataUpdateR
 type Logger = (message: string) => void;
 
 export class SerializedImageQueue {
-  private queue = Promise.resolve();
+  private queue: Promise<void> = Promise.resolve();
   private readonly updateImage: ImageUpdater;
   private readonly log: Logger;
 
@@ -21,18 +21,23 @@ export class SerializedImageQueue {
   }
 
   enqueue(update: ImageUpdateRequest) {
-    this.queue = this.queue
+    const task = this.queue
       .then(async () => {
         const result = await this.updateImage(update);
         if (result !== ImageRawDataUpdateResult.success) {
           this.log(`Image update failed (${update.containerName}): ${String(result)}`);
+          return false;
         }
+
+        return true;
       })
       .catch((error) => {
         this.log(`Image queue error: ${String(error)}`);
+        return false;
       });
 
-    return this.queue;
+    this.queue = task.then(() => undefined);
+    return task;
   }
 
   reset() {

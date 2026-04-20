@@ -1,6 +1,6 @@
 import { CONTACTS } from '../../app/contacts';
 import type { AppState } from '../../app/types';
-import { formatHorizontalActions, toSubtitleLines, type GlassScreenView } from '../shared';
+import { toSubtitleLines, type GlassScreenView } from '../shared';
 
 function formatContactActionLabels() {
   return CONTACTS.map((item) => item.name);
@@ -10,7 +10,7 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
   const selectedContact = CONTACTS[state.selectedContactIndex] ?? CONTACTS[0];
   const actions = formatContactActionLabels();
   const subtitleText = toSubtitleLines(
-    `${selectedContact.name.toUpperCase()} ${selectedContact.frequency}. Swipe to select. Tap to dial.`,
+    `${selectedContact.name.toUpperCase()} ${selectedContact.frequency}. Swipe to select caller.`,
     30,
     2,
   ).join('\n');
@@ -24,7 +24,7 @@ export function buildContactsScreen(state: AppState): GlassScreenView {
     subtitleText,
     centerTopLabelText: 'PTT',
     centerBottomLabelText: 'MEMORY',
-    horizontalActionsText: formatHorizontalActions(actions, state.selectedContactIndex),
+    horizontalActionsText: `Tap to select [${selectedContact.name}] to call`,
     actions,
     selectedActionIndex: state.selectedContactIndex,
     mode: 'compact',

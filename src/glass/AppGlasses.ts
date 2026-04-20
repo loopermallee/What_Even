@@ -470,6 +470,16 @@ export class AppGlasses {
       };
     }
 
+    const state = this.store.getState();
+    if (state.screen === 'contacts' && this.isValidContactsIndex(state.selectedContactIndex)) {
+      return {
+        index: state.selectedContactIndex,
+        source: 'current_selected_contact' as const,
+        explicitFailureReason: this.describeExplicitTapRowFailure(inspection),
+        highlightFailureReason: this.describeTrustedVisibleHighlightFailure(resolvedSelectionIndex, inspection),
+      };
+    }
+
     return {
       index: null,
       source: null,
@@ -683,12 +693,14 @@ export class AppGlasses {
 
   private buildStatusListContainer() {
     const actions = this.getActionItems();
-    const safeActions = actions.length > 0 ? actions : [' '];
+    const safeActions = actions.length > 0
+      ? Array.from({ length: actions.length }, () => '')
+      : [''];
     return {
-      xPosition: 548,
-      yPosition: 264,
+      xPosition: 556,
+      yPosition: 78,
       width: 20,
-      height: 18,
+      height: 128,
       borderWidth: 0,
       borderColor: 0,
       borderRadius: 0,
@@ -726,10 +738,10 @@ export class AppGlasses {
   private buildCenterReadoutTextContainer() {
     const view = this.getView();
     return {
-      xPosition: 228,
-      yPosition: 82,
-      width: 126,
-      height: 24,
+      xPosition: 220,
+      yPosition: 72,
+      width: 148,
+      height: 30,
       containerID: GLASSES_CONTAINERS.centerReadoutText.id,
       containerName: GLASSES_CONTAINERS.centerReadoutText.name,
       content: view.centerReadoutText || ' ',
@@ -744,10 +756,10 @@ export class AppGlasses {
   private buildCenterTopLabelTextContainer() {
     const view = this.getView();
     return {
-      xPosition: 260,
-      yPosition: 8,
-      width: 64,
-      height: 16,
+      xPosition: 246,
+      yPosition: 4,
+      width: 92,
+      height: 20,
       containerID: GLASSES_CONTAINERS.centerTopLabelText.id,
       containerName: GLASSES_CONTAINERS.centerTopLabelText.name,
       content: view.centerTopLabelText || ' ',
@@ -762,10 +774,10 @@ export class AppGlasses {
   private buildCenterBottomLabelTextContainer() {
     const view = this.getView();
     return {
-      xPosition: 246,
-      yPosition: 124,
-      width: 84,
-      height: 16,
+      xPosition: 232,
+      yPosition: 118,
+      width: 112,
+      height: 22,
       containerID: GLASSES_CONTAINERS.centerBottomLabelText.id,
       containerName: GLASSES_CONTAINERS.centerBottomLabelText.name,
       content: view.centerBottomLabelText || ' ',

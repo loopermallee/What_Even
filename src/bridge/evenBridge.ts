@@ -1481,13 +1481,37 @@ export class EvenBridgeApp {
 
     try {
       this.lastQueuedImageSignature = imageSignature;
+      let successfulUpdates = 0;
+      let failedUpdates = 0;
+
       for (const request of imageRequests) {
         const imageBytes = await renderCodecImageBytes(request.request);
-        await this.imageQueue.enqueue({
+        const updateOk = await this.imageQueue.enqueue({
           containerID: request.containerID,
           containerName: request.containerName,
           imageData: imageBytes,
         });
+        if (updateOk) {
+          successfulUpdates += 1;
+        } else {
+          failedUpdates += 1;
+        }
+      }
+
+      if (failedUpdates > 0) {
+        this.lastQueuedImageSignature = null;
+        this.lastRenderedImageSignature = null;
+        this.lastImageSyncAt = null;
+        this.store.log(
+          `Image sync partial failure: ok=${successfulUpdates}, failed=${failedUpdates}. Scheduling retry.`
+        );
+        this.store.setImageSyncDebug({
+          lastPortraitAsset: imageSignature,
+          lastResult: 'failed',
+          lastAt: Date.now(),
+        });
+        this.scheduleImageCooldownSync(this.imageSyncCooldownMs);
+        return;
       }
 
       this.lastRenderedImageSignature = imageSignature;
@@ -1499,11 +1523,14 @@ export class EvenBridgeApp {
       });
     } catch {
       this.lastQueuedImageSignature = null;
+      this.lastRenderedImageSignature = null;
+      this.lastImageSyncAt = null;
       this.store.setImageSyncDebug({
         lastPortraitAsset: imageSignature,
         lastResult: 'failed',
         lastAt: Date.now(),
       });
+      this.scheduleImageCooldownSync(this.imageSyncCooldownMs);
     }
   }
 

@@ -102,8 +102,8 @@ function getPortraitDefinition(asset: PortraitAsset, side: 'left' | 'right'): Po
   if (side === 'right') {
     return {
       characterId: 'snake',
-      frameKey: 'snake.special.helmet',
-      family: 'neutral',
+      frameKey: 'snake.neutral.idle',
+      family: isAlert ? 'alert' : 'neutral',
     };
   }
 

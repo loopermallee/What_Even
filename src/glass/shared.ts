@@ -429,7 +429,7 @@ export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
   const leftPortraitAsset = appendExpressionBucketToAsset(leftPortraitBase, leftExpressionBucket);
   const rightPortraitAsset = appendExpressionBucketToAsset(rightPortraitBase, rightExpressionBucket);
   const isTalking = scene.talkingMode !== 'silent' && scene.currentRole !== 'system';
-  const liveAudioBucket = clampBarBucket(3 + Math.round(scene.listeningActivityLevel * 5));
+  const liveAudioBucket = clampBarBucket(1 + Math.round(scene.listeningActivityLevel * 9));
   const scriptedEntry = getActiveScriptedEntry(state);
   const scriptedSignalSeed = scriptedEntry
     ? scriptedEntry.id
