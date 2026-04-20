@@ -163,7 +163,6 @@ export class EvenBridgeApp {
   private readonly lastSyncedTextByContainer = new Map<string, string>();
   private lastRebuildSignature = '';
   private lastSyncSignature = '';
-  private lastQueuedScreen: string | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private previousObservedState: { screen: string; selectedContactIndex: number; started: boolean } | null = null;
   private lastAudioLifecycleSignature = '';
@@ -829,15 +828,13 @@ export class EvenBridgeApp {
     this.refreshCursorBlinkLoop();
     this.refreshDraftVisibilityTimer();
 
-    const screenChanged = this.lastQueuedScreen !== this.store.getState().screen;
-    this.lastQueuedScreen = this.store.getState().screen;
     const signature = this.getSyncSignature();
     if (signature === this.lastSyncSignature) {
       return;
     }
 
     this.lastSyncSignature = signature;
-    this.scheduleSync(screenChanged);
+    this.scheduleSync(false);
   }
 
   private scheduleSync(forceImages: boolean) {
@@ -937,7 +934,6 @@ export class EvenBridgeApp {
     this.lastSyncedTextByContainer.clear();
     this.lastRebuildSignature = '';
     this.lastSyncSignature = '';
-    this.lastQueuedScreen = null;
     this.lastAudioLifecycleSignature = '';
     this.audioCapture.clearBuffer();
     this.previousObservedState = null;
@@ -1305,6 +1301,7 @@ export class EvenBridgeApp {
       return;
     }
 
+    let shouldForceImages = forceImages;
     this.refreshCursorBlinkLoop();
     const rebuildSignature = this.glasses.getStructuralRebuildSignature();
     const currentState = this.store.getState();
@@ -1316,6 +1313,8 @@ export class EvenBridgeApp {
       const rebuilt = await this.startupLifecycle.attemptRebuild('state-sync', this.glasses.buildRebuildContainer());
       if (rebuilt) {
         this.lastRebuildSignature = rebuildSignature;
+        shouldForceImages = true;
+        this.store.log('Rebuild applied: forcing image resend for persistent codec panels.');
         if (currentState.screen === 'contacts') {
           this.store.log('Contacts render verification pending: rebuild succeeded during sync, but the simulator frame is not yet visually verified.');
         }
@@ -1323,7 +1322,7 @@ export class EvenBridgeApp {
     }
 
     await this.syncText();
-    await this.syncImages(forceImages);
+    await this.syncImages(shouldForceImages);
 
     const animationTickDelayMs = this.glasses.getAnimationTickDelayMs();
     if (animationTickDelayMs === null) {

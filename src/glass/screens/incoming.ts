@@ -24,7 +24,7 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
     dialogueCapturesInput: true,
     centerModuleVariant: 'incoming',
     actionMode: 'tap-only',
-    captureSurfaceMode: 'text',
+    captureSurfaceMode: 'list',
     arrowPulseDirection: 'none',
   };
 }

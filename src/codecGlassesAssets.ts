@@ -3,7 +3,7 @@ import {
   getCodecPortraitManifest,
 } from './app/codecPortraitManifest';
 import type { CodecCharacterId, CodecPortraitFrameKey } from './app/types';
-import type { GlassArrowPulseDirection, GlassCenterModuleVariant, PortraitAsset } from './glass/shared';
+import type { GlassCenterModuleVariant, PortraitAsset } from './glass/shared';
 
 export type CodecImageRenderRequest =
   | {
@@ -13,10 +13,13 @@ export type CodecImageRenderRequest =
     active: boolean;
   }
   | {
-    kind: 'center-module';
+    kind: 'center-core-static';
+    variant: GlassCenterModuleVariant;
+  }
+  | {
+    kind: 'center-signal-dynamic';
     variant: GlassCenterModuleVariant;
     barBucket: number;
-    arrowPulseDirection: GlassArrowPulseDirection;
   };
 
 const assetCache = new Map<string, Uint8Array>();
@@ -198,51 +201,25 @@ async function renderPortraitPanelBytes(request: Extract<CodecImageRenderRequest
   return canvasToPngBytes(canvas);
 }
 
-function drawSignalBars(context: CanvasRenderingContext2D, level: number) {
+function drawSignalBars(context: CanvasRenderingContext2D, level: number, variant: GlassCenterModuleVariant) {
   const clamped = Math.max(0, Math.min(10, Math.round(level)));
   const bars = 7;
-  const barWidth = 52;
-  const barHeight = 4;
+  const barWidth = 106;
+  const barHeight = 5;
   const gap = 2;
-  const startX = 88;
-  const startY = 34;
+  const startX = 14;
+  const startY = 6;
+  const activeColor = variant === 'ended' ? '#97b7a4' : '#d7ffe6';
+  const inactiveColor = variant === 'ended' ? 'rgba(129,164,145,0.33)' : 'rgba(160,255,196,0.18)';
 
   for (let index = 0; index < bars; index += 1) {
     const isActive = index < Math.max(1, Math.round((clamped / 10) * bars));
-    context.fillStyle = isActive ? '#d7ffe6' : 'rgba(160,255,196,0.18)';
+    context.fillStyle = isActive ? activeColor : inactiveColor;
     context.fillRect(startX, startY + index * (barHeight + gap), barWidth - index * 4, barHeight);
   }
 }
 
-function drawDirectionArrows(context: CanvasRenderingContext2D, pulseDirection: GlassArrowPulseDirection) {
-  const leftColor = pulseDirection === 'left' ? '#d7ffe6' : 'rgba(114,255,173,0.30)';
-  const rightColor = pulseDirection === 'right' ? '#d7ffe6' : 'rgba(114,255,173,0.30)';
-  const leftGlow = pulseDirection === 'left' ? 'rgba(185,255,219,0.65)' : 'rgba(114,255,173,0.22)';
-  const rightGlow = pulseDirection === 'right' ? 'rgba(185,255,219,0.65)' : 'rgba(114,255,173,0.22)';
-
-  context.save();
-  context.shadowBlur = 6;
-  context.shadowColor = leftGlow;
-  context.fillStyle = leftColor;
-  context.beginPath();
-  context.moveTo(18, 54);
-  context.lineTo(34, 44);
-  context.lineTo(34, 64);
-  context.closePath();
-  context.fill();
-
-  context.shadowColor = rightGlow;
-  context.fillStyle = rightColor;
-  context.beginPath();
-  context.moveTo(266, 54);
-  context.lineTo(250, 44);
-  context.lineTo(250, 64);
-  context.closePath();
-  context.fill();
-  context.restore();
-}
-
-async function renderCenterModuleBytes(request: Extract<CodecImageRenderRequest, { kind: 'center-module' }>) {
+async function renderCenterCoreStaticBytes(request: Extract<CodecImageRenderRequest, { kind: 'center-core-static' }>) {
   const canvas = document.createElement('canvas');
   canvas.width = 284;
   canvas.height = 144;
@@ -282,9 +259,26 @@ async function renderCenterModuleBytes(request: Extract<CodecImageRenderRequest,
   context.fillRect(70, 30, 144, 48);
   context.strokeStyle = stroke;
   context.strokeRect(70, 30, 144, 48);
+  context.strokeStyle = request.variant === 'ended' ? '#5e7a6c' : '#6ed892';
+  context.lineWidth = 1;
+  context.strokeRect(72, 32, 140, 44);
 
-  drawSignalBars(context, request.barBucket);
-  drawDirectionArrows(context, request.arrowPulseDirection);
+  return canvasToPngBytes(canvas);
+}
+
+async function renderCenterSignalDynamicBytes(request: Extract<CodecImageRenderRequest, { kind: 'center-signal-dynamic' }>) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 144;
+  canvas.height = 48;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Canvas 2D context unavailable for center signal rendering.');
+  }
+
+  context.fillStyle = '#000000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  drawSignalBars(context, request.barBucket, request.variant);
 
   return canvasToPngBytes(canvas);
 }
@@ -298,7 +292,9 @@ export async function renderCodecImageBytes(request: CodecImageRenderRequest) {
 
   const bytes = request.kind === 'portrait-panel'
     ? await renderPortraitPanelBytes(request)
-    : await renderCenterModuleBytes(request);
+    : request.kind === 'center-core-static'
+      ? await renderCenterCoreStaticBytes(request)
+      : await renderCenterSignalDynamicBytes(request);
   assetCache.set(cacheKey, bytes);
   return bytes;
 }

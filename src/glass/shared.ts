@@ -30,6 +30,9 @@ export const GLASSES_CONTAINERS = {
   centerTopLabelText: { id: 109, name: 'codec-ptt' },
   centerBottomLabelText: { id: 110, name: 'codec-memo' },
   horizontalActionsText: { id: 111, name: 'codec-act' },
+  centerSignalImage: { id: 112, name: 'codec-signal' },
+  leftArrowText: { id: 113, name: 'codec-larr' },
+  rightArrowText: { id: 114, name: 'codec-rarr' },
 } as const;
 
 // Keep this tunable: perceived fit can differ a bit between the simulator and real G2 hardware.

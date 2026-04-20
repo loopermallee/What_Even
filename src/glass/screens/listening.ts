@@ -267,7 +267,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       showActions: false,
       centerModuleVariant: 'listening',
       actionMode: 'tap-only',
-      captureSurfaceMode: 'text',
+      captureSurfaceMode: 'list',
       arrowPulseDirection: 'none',
     };
   }
@@ -294,7 +294,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     dialogueCapturesInput: true,
     centerModuleVariant: 'listening',
     actionMode: 'tap-only',
-    captureSurfaceMode: 'text',
+    captureSurfaceMode: 'list',
     arrowPulseDirection: 'none',
     footerLabel: isPauseActionable(state) ? 'Tap: Pause' : undefined,
   };

@@ -50,10 +50,6 @@ export class AppGlasses {
       request: CodecImageRenderRequest;
     }> = [];
 
-    if (!view.showPortrait) {
-      return requests;
-    }
-
     const portraitState = this.getPortraitState();
     const now = Date.now();
     const barBucket = this.resolveCenterSignalBarBucket(portraitState, now);
@@ -73,16 +69,10 @@ export class AppGlasses {
       {
         containerID: GLASSES_CONTAINERS.centerImage.id,
         containerName: GLASSES_CONTAINERS.centerImage.name,
-        syncKey: JSON.stringify({
-          variant: view.centerModuleVariant,
-          barBucket,
-          arrowPulseDirection: view.arrowPulseDirection,
-        }),
+        syncKey: 'center-core-static:v2',
         request: {
-          kind: 'center-module',
-          variant: view.centerModuleVariant,
-          barBucket,
-          arrowPulseDirection: view.arrowPulseDirection,
+          kind: 'center-core-static',
+          variant: 'directory',
         },
       },
       {
@@ -96,6 +86,20 @@ export class AppGlasses {
           active: portraitState.rightActive,
         },
       },
+      {
+        containerID: GLASSES_CONTAINERS.centerSignalImage.id,
+        containerName: GLASSES_CONTAINERS.centerSignalImage.name,
+        syncKey: JSON.stringify({
+          kind: 'signal',
+          variant: view.centerModuleVariant,
+          barBucket,
+        }),
+        request: {
+          kind: 'center-signal-dynamic',
+          variant: view.centerModuleVariant,
+          barBucket,
+        },
+      },
     );
 
     return requests;
@@ -103,18 +107,15 @@ export class AppGlasses {
 
   getActionSeedIndex() {
     const view = this.getView();
-    return view.showActions ? view.selectedActionIndex : null;
+    return view.captureSurfaceMode === 'list' ? view.selectedActionIndex : null;
   }
 
   getTextRenderRequests() {
     const view = this.getView();
+    const leftArrowText = view.arrowPulseDirection === 'left' ? '◀' : '◁';
+    const rightArrowText = view.arrowPulseDirection === 'right' ? '▶' : '▷';
 
     return [
-      {
-        containerID: GLASSES_CONTAINERS.topRowText.id,
-        containerName: GLASSES_CONTAINERS.topRowText.name,
-        content: view.topRowText || ' ',
-      },
       {
         containerID: GLASSES_CONTAINERS.centerTopLabelText.id,
         containerName: GLASSES_CONTAINERS.centerTopLabelText.name,
@@ -129,6 +130,16 @@ export class AppGlasses {
         containerID: GLASSES_CONTAINERS.centerBottomLabelText.id,
         containerName: GLASSES_CONTAINERS.centerBottomLabelText.name,
         content: view.centerBottomLabelText || ' ',
+      },
+      {
+        containerID: GLASSES_CONTAINERS.leftArrowText.id,
+        containerName: GLASSES_CONTAINERS.leftArrowText.name,
+        content: leftArrowText,
+      },
+      {
+        containerID: GLASSES_CONTAINERS.rightArrowText.id,
+        containerName: GLASSES_CONTAINERS.rightArrowText.name,
+        content: rightArrowText,
       },
       {
         containerID: GLASSES_CONTAINERS.dialogueText.id,
@@ -610,9 +621,8 @@ export class AppGlasses {
   }
 
   buildTextOnlyRebuildContainer(): BridgePagePayload {
-    const view = this.getView();
     const textObject = this.buildTextContainers();
-    const listObject = view.captureSurfaceMode === 'list' ? [this.buildStatusListContainer()] : [];
+    const listObject = [this.buildStatusListContainer()];
 
     return {
       containerTotalNum: textObject.length + listObject.length,
@@ -624,7 +634,7 @@ export class AppGlasses {
   buildRebuildContainer(): BridgePagePayload {
     const textObject = this.buildTextContainers();
     const imageObject = this.buildImageContainers();
-    const listObject = this.getView().captureSurfaceMode === 'list' ? [this.buildStatusListContainer()] : [];
+    const listObject = [this.buildStatusListContainer()];
 
     return {
       containerTotalNum: textObject.length + imageObject.length + listObject.length,
@@ -670,37 +680,33 @@ export class AppGlasses {
 
   private buildTextContainers() {
     return [
-      this.buildTopRowTextContainer(),
       this.buildCenterTopLabelTextContainer(),
       this.buildCenterReadoutTextContainer(),
       this.buildCenterBottomLabelTextContainer(),
+      this.buildLeftArrowTextContainer(),
+      this.buildRightArrowTextContainer(),
       this.buildSubtitleTextContainer(),
       this.buildHorizontalActionsTextContainer(),
     ];
   }
 
   private buildImageContainers() {
-    if (!this.getView().showPortrait) {
-      return [];
-    }
-
     return [
       this.buildLeftPortraitImageContainer(),
       this.buildCenterImageContainer(),
       this.buildRightPortraitImageContainer(),
+      this.buildCenterSignalImageContainer(),
     ];
   }
 
   private buildStatusListContainer() {
-    const actions = this.getActionItems();
-    const safeActions = actions.length > 0
-      ? Array.from({ length: actions.length }, () => '')
-      : [''];
+    const itemCount = CONTACTS.length;
+    const safeActions = Array.from({ length: itemCount }, () => ' ');
     return {
-      xPosition: 556,
-      yPosition: 78,
-      width: 20,
-      height: 128,
+      xPosition: 2,
+      yPosition: 236,
+      width: 24,
+      height: 48,
       borderWidth: 0,
       borderColor: 0,
       borderRadius: 0,
@@ -717,31 +723,13 @@ export class AppGlasses {
     };
   }
 
-  private buildTopRowTextContainer() {
-    const view = this.getView();
-    return {
-      xPosition: 20,
-      yPosition: 0,
-      width: 536,
-      height: 22,
-      containerID: GLASSES_CONTAINERS.topRowText.id,
-      containerName: GLASSES_CONTAINERS.topRowText.name,
-      content: view.topRowText || ' ',
-      isEventCapture: 0,
-      borderWidth: 0,
-      borderColor: 0,
-      borderRadius: 0,
-      paddingLength: 0,
-    };
-  }
-
   private buildCenterReadoutTextContainer() {
     const view = this.getView();
     return {
-      xPosition: 220,
-      yPosition: 72,
-      width: 148,
-      height: 30,
+      xPosition: 236,
+      yPosition: 86,
+      width: 132,
+      height: 24,
       containerID: GLASSES_CONTAINERS.centerReadoutText.id,
       containerName: GLASSES_CONTAINERS.centerReadoutText.name,
       content: view.centerReadoutText || ' ',
@@ -756,10 +744,10 @@ export class AppGlasses {
   private buildCenterTopLabelTextContainer() {
     const view = this.getView();
     return {
-      xPosition: 246,
-      yPosition: 4,
-      width: 92,
-      height: 20,
+      xPosition: 248,
+      yPosition: 18,
+      width: 88,
+      height: 24,
       containerID: GLASSES_CONTAINERS.centerTopLabelText.id,
       containerName: GLASSES_CONTAINERS.centerTopLabelText.name,
       content: view.centerTopLabelText || ' ',
@@ -775,9 +763,9 @@ export class AppGlasses {
     const view = this.getView();
     return {
       xPosition: 232,
-      yPosition: 118,
-      width: 112,
-      height: 22,
+      yPosition: 126,
+      width: 116,
+      height: 24,
       containerID: GLASSES_CONTAINERS.centerBottomLabelText.id,
       containerName: GLASSES_CONTAINERS.centerBottomLabelText.name,
       content: view.centerBottomLabelText || ' ',
@@ -793,13 +781,13 @@ export class AppGlasses {
     const view = this.getView();
     return {
       xPosition: 36,
-      yPosition: 170,
+      yPosition: 172,
       width: 504,
       height: 74,
       containerID: GLASSES_CONTAINERS.dialogueText.id,
       containerName: GLASSES_CONTAINERS.dialogueText.name,
       content: view.subtitleText || ' ',
-      isEventCapture: view.captureSurfaceMode === 'text' ? 1 : 0,
+      isEventCapture: 0,
       borderWidth: 0,
       borderColor: 0,
       borderRadius: 0,
@@ -811,7 +799,7 @@ export class AppGlasses {
     const view = this.getView();
     return {
       xPosition: 28,
-      yPosition: 250,
+      yPosition: 248,
       width: 520,
       height: 30,
       containerID: GLASSES_CONTAINERS.horizontalActionsText.id,
@@ -828,7 +816,7 @@ export class AppGlasses {
   private buildLeftPortraitImageContainer() {
     return {
       xPosition: 18,
-      yPosition: 12,
+      yPosition: 14,
       width: 120,
       height: 132,
       containerID: GLASSES_CONTAINERS.portraitImage.id,
@@ -839,7 +827,7 @@ export class AppGlasses {
   private buildCenterImageContainer() {
     return {
       xPosition: 146,
-      yPosition: 8,
+      yPosition: 10,
       width: 284,
       height: 144,
       containerID: GLASSES_CONTAINERS.centerImage.id,
@@ -850,11 +838,56 @@ export class AppGlasses {
   private buildRightPortraitImageContainer() {
     return {
       xPosition: 438,
-      yPosition: 12,
+      yPosition: 14,
       width: 120,
       height: 132,
       containerID: GLASSES_CONTAINERS.rightPortraitImage.id,
       containerName: GLASSES_CONTAINERS.rightPortraitImage.name,
+    };
+  }
+
+  private buildCenterSignalImageContainer() {
+    return {
+      xPosition: 216,
+      yPosition: 40,
+      width: 144,
+      height: 48,
+      containerID: GLASSES_CONTAINERS.centerSignalImage.id,
+      containerName: GLASSES_CONTAINERS.centerSignalImage.name,
+    };
+  }
+
+  private buildLeftArrowTextContainer() {
+    return {
+      xPosition: 174,
+      yPosition: 62,
+      width: 24,
+      height: 20,
+      containerID: GLASSES_CONTAINERS.leftArrowText.id,
+      containerName: GLASSES_CONTAINERS.leftArrowText.name,
+      content: this.getView().arrowPulseDirection === 'left' ? '◀' : '◁',
+      isEventCapture: 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
+    };
+  }
+
+  private buildRightArrowTextContainer() {
+    return {
+      xPosition: 382,
+      yPosition: 62,
+      width: 24,
+      height: 20,
+      containerID: GLASSES_CONTAINERS.rightArrowText.id,
+      containerName: GLASSES_CONTAINERS.rightArrowText.name,
+      content: this.getView().arrowPulseDirection === 'right' ? '▶' : '▷',
+      isEventCapture: 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
     };
   }
 
