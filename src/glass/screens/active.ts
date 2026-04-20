@@ -1,6 +1,7 @@
 import type { AppState } from '../../app/types';
 import { getResponseStatusLabel } from '../../app/presentation';
 import {
+  formatHorizontalActions,
   formatGlassSpeakerLine,
   getActiveTranscriptEntry,
   getSelectedContact,
@@ -39,8 +40,11 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  ${statusLabel}`,
     centerReadoutText: `FREQ ${contact.frequency}`,
     subtitleText,
+    centerTopLabelText: 'PTT',
+    centerBottomLabelText: 'MEMORY',
+    horizontalActionsText: formatHorizontalActions(['NEXT'], 0),
     actions: ['NEXT'],
-    selectedActionIndex: state.activeActionIndex,
+    selectedActionIndex: 0,
     mode,
     liveLineKind: 'none',
     showPortrait: true,
@@ -48,5 +52,6 @@ export function buildActiveScreen(state: AppState): GlassScreenView {
     centerModuleVariant: 'active',
     actionMode: 'hidden-list',
     captureSurfaceMode: 'list',
+    arrowPulseDirection: 'none',
   };
 }

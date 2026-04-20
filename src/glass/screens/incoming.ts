@@ -12,6 +12,9 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
     topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  TRANSMIT`,
     centerReadoutText: `FREQ ${contact.frequency}`,
     subtitleText,
+    centerTopLabelText: 'PTT',
+    centerBottomLabelText: 'MEMORY',
+    horizontalActionsText: ' ',
     actions: [],
     selectedActionIndex: 0,
     mode: 'compact',
@@ -22,5 +25,6 @@ export function buildIncomingScreen(state: AppState): GlassScreenView {
     centerModuleVariant: 'incoming',
     actionMode: 'tap-only',
     captureSurfaceMode: 'text',
+    arrowPulseDirection: 'none',
   };
 }

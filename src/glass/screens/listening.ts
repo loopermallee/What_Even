@@ -2,6 +2,7 @@ import { getTurnSendModeLabel, getVisibleSttDraft, isPauseActionable } from '../
 import type { AppState, TranscriptEntry } from '../../app/types';
 import { DEBUG_STT_COUNTDOWN } from '../../bridge/audio';
 import {
+  formatHorizontalActions,
   formatGlassSpeakerLine,
   getSelectedContact,
   getLatestTranscriptEntryByRole,
@@ -146,6 +147,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       offset: Number.MAX_SAFE_INTEGER,
     });
     const subtitleText = toSubtitleLines(speechUnavailableDialogue, 30, 2).join('\n');
+    const actions = ['Retry', 'Back'];
 
     return {
       screenLabel: '',
@@ -154,7 +156,10 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  LISTEN`,
       centerReadoutText: 'SPEECH OFFLINE',
       subtitleText,
-      actions: ['Retry', 'Back'],
+      centerTopLabelText: 'PTT',
+      centerBottomLabelText: 'MEMORY',
+      horizontalActionsText: formatHorizontalActions(actions, Math.min(state.listeningActionIndex, 1)),
+      actions,
       selectedActionIndex: Math.min(state.listeningActionIndex, 1),
       mode: 'compact',
       liveLineKind: 'none',
@@ -163,6 +168,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       centerModuleVariant: 'listening',
       actionMode: 'hidden-list',
       captureSurfaceMode: 'list',
+      arrowPulseDirection: 'none',
     };
   }
 
@@ -185,6 +191,12 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  REVIEW`,
       centerReadoutText: actions[state.listeningActionIndex] ?? actions[0],
       subtitleText,
+      centerTopLabelText: 'PTT',
+      centerBottomLabelText: 'MEMORY',
+      horizontalActionsText: formatHorizontalActions(
+        actions,
+        Math.min(state.listeningActionIndex, actions.length - 1),
+      ),
       actions,
       selectedActionIndex: Math.min(state.listeningActionIndex, actions.length - 1),
       mode: 'compact',
@@ -194,6 +206,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       centerModuleVariant: 'listening',
       actionMode: 'hidden-list',
       captureSurfaceMode: 'list',
+      arrowPulseDirection: 'none',
     };
   }
 
@@ -204,6 +217,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       maxLines: 3,
       offset: Number.MAX_SAFE_INTEGER,
     });
+    const actions = ['TRANSMIT', 'Retry'];
     const subtitleText = toSubtitleLines(reviewContent, 30, 2).join('\n');
 
     return {
@@ -213,7 +227,10 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  REVIEW`,
       centerReadoutText: 'TRANSMIT READY',
       subtitleText,
-      actions: ['TRANSMIT', 'Retry'],
+      centerTopLabelText: 'PTT',
+      centerBottomLabelText: 'MEMORY',
+      horizontalActionsText: formatHorizontalActions(actions, Math.min(state.listeningActionIndex, 1)),
+      actions,
       selectedActionIndex: Math.min(state.listeningActionIndex, 1),
       mode: 'compact',
       liveLineKind: 'none',
@@ -222,6 +239,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       centerModuleVariant: 'listening',
       actionMode: 'hidden-list',
       captureSurfaceMode: 'list',
+      arrowPulseDirection: 'none',
     };
   }
 
@@ -240,6 +258,9 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  LISTEN`,
       centerReadoutText: 'CONNECTING',
       subtitleText,
+      centerTopLabelText: 'PTT',
+      centerBottomLabelText: 'MEMORY',
+      horizontalActionsText: ' ',
       actions: [],
       selectedActionIndex: 0,
       mode: 'compact',
@@ -249,6 +270,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
       centerModuleVariant: 'listening',
       actionMode: 'tap-only',
       captureSurfaceMode: 'text',
+      arrowPulseDirection: 'none',
     };
   }
 
@@ -262,6 +284,9 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     topRowText: `${contact.name.toUpperCase()}  ${contact.frequency}  CAPTURE`,
     centerReadoutText: state.listeningSessionReachedActiveCapture ? 'REC ON' : 'REC WAIT',
     subtitleText,
+    centerTopLabelText: 'PTT',
+    centerBottomLabelText: 'MEMORY',
+    horizontalActionsText: ' ',
     actions: [],
     selectedActionIndex: 0,
     mode: 'compact',
@@ -272,6 +297,7 @@ export function buildListeningScreen(state: AppState): GlassScreenView {
     centerModuleVariant: 'listening',
     actionMode: 'tap-only',
     captureSurfaceMode: 'text',
+    arrowPulseDirection: 'none',
     footerLabel: isPauseActionable(state) ? 'Tap: Pause' : undefined,
   };
 }

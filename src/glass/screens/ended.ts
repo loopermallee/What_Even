@@ -1,7 +1,8 @@
 import type { AppState } from '../../app/types';
-import { toSubtitleLines, wrapText, type GlassScreenView } from '../shared';
+import { formatHorizontalActions, toSubtitleLines, wrapText, type GlassScreenView } from '../shared';
 
 export function buildEndedScreen(_state: AppState): GlassScreenView {
+  const actions = ['RETURN'];
   const subtitleText = toSubtitleLines('Transmission complete. Tap return to directory.', 30, 2).join('\n');
 
   return {
@@ -11,7 +12,10 @@ export function buildEndedScreen(_state: AppState): GlassScreenView {
     topRowText: 'SYSTEM  CODEC  LINK CLOSED',
     centerReadoutText: 'SESSION ENDED',
     subtitleText,
-    actions: ['RETURN'],
+    centerTopLabelText: 'PTT',
+    centerBottomLabelText: 'MEMORY',
+    horizontalActionsText: formatHorizontalActions(actions, 0),
+    actions,
     selectedActionIndex: 0,
     mode: 'compact',
     liveLineKind: 'none',
@@ -20,5 +24,6 @@ export function buildEndedScreen(_state: AppState): GlassScreenView {
     centerModuleVariant: 'ended',
     actionMode: 'hidden-list',
     captureSurfaceMode: 'list',
+    arrowPulseDirection: 'none',
   };
 }

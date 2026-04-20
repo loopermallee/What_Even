@@ -3,7 +3,7 @@ import {
   getCodecPortraitManifest,
 } from './app/codecPortraitManifest';
 import type { CodecCharacterId, CodecPortraitFrameKey } from './app/types';
-import type { GlassCenterModuleVariant, PortraitAsset } from './glass/shared';
+import type { GlassArrowPulseDirection, GlassCenterModuleVariant, PortraitAsset } from './glass/shared';
 
 export type CodecImageRenderRequest =
   | {
@@ -16,6 +16,7 @@ export type CodecImageRenderRequest =
     kind: 'center-module';
     variant: GlassCenterModuleVariant;
     barBucket: number;
+    arrowPulseDirection: GlassArrowPulseDirection;
   };
 
 const assetCache = new Map<string, Uint8Array>();
@@ -200,17 +201,45 @@ async function renderPortraitPanelBytes(request: Extract<CodecImageRenderRequest
 function drawSignalBars(context: CanvasRenderingContext2D, level: number) {
   const clamped = Math.max(0, Math.min(10, Math.round(level)));
   const bars = 7;
-  const barWidth = 42;
-  const barHeight = 6;
-  const gap = 4;
-  const startX = 36;
-  const startY = 48;
+  const barWidth = 52;
+  const barHeight = 4;
+  const gap = 2;
+  const startX = 88;
+  const startY = 34;
 
   for (let index = 0; index < bars; index += 1) {
     const isActive = index < Math.max(1, Math.round((clamped / 10) * bars));
     context.fillStyle = isActive ? '#d7ffe6' : 'rgba(160,255,196,0.18)';
     context.fillRect(startX, startY + index * (barHeight + gap), barWidth - index * 4, barHeight);
   }
+}
+
+function drawDirectionArrows(context: CanvasRenderingContext2D, pulseDirection: GlassArrowPulseDirection) {
+  const leftColor = pulseDirection === 'left' ? '#d7ffe6' : 'rgba(114,255,173,0.30)';
+  const rightColor = pulseDirection === 'right' ? '#d7ffe6' : 'rgba(114,255,173,0.30)';
+  const leftGlow = pulseDirection === 'left' ? 'rgba(185,255,219,0.65)' : 'rgba(114,255,173,0.22)';
+  const rightGlow = pulseDirection === 'right' ? 'rgba(185,255,219,0.65)' : 'rgba(114,255,173,0.22)';
+
+  context.save();
+  context.shadowBlur = 6;
+  context.shadowColor = leftGlow;
+  context.fillStyle = leftColor;
+  context.beginPath();
+  context.moveTo(18, 54);
+  context.lineTo(34, 44);
+  context.lineTo(34, 64);
+  context.closePath();
+  context.fill();
+
+  context.shadowColor = rightGlow;
+  context.fillStyle = rightColor;
+  context.beginPath();
+  context.moveTo(266, 54);
+  context.lineTo(250, 44);
+  context.lineTo(250, 64);
+  context.closePath();
+  context.fill();
+  context.restore();
 }
 
 async function renderCenterModuleBytes(request: Extract<CodecImageRenderRequest, { kind: 'center-module' }>) {
@@ -249,33 +278,13 @@ async function renderCenterModuleBytes(request: Extract<CodecImageRenderRequest,
   context.lineTo(276, 108);
   context.stroke();
 
-  context.fillStyle = '#0e2018';
-  context.fillRect(113, 2, 58, 18);
-  context.fillRect(106, 109, 72, 18);
-  context.strokeStyle = dim;
-  context.strokeRect(113, 2, 58, 18);
-  context.strokeRect(106, 109, 72, 18);
-
   context.fillStyle = '#08110d';
   context.fillRect(70, 30, 144, 48);
   context.strokeStyle = stroke;
   context.strokeRect(70, 30, 144, 48);
 
   drawSignalBars(context, request.barBucket);
-
-  context.fillStyle = 'rgba(114,255,173,0.3)';
-  context.beginPath();
-  context.moveTo(18, 54);
-  context.lineTo(34, 44);
-  context.lineTo(34, 64);
-  context.closePath();
-  context.fill();
-  context.beginPath();
-  context.moveTo(266, 54);
-  context.lineTo(250, 44);
-  context.lineTo(250, 64);
-  context.closePath();
-  context.fill();
+  drawDirectionArrows(context, request.arrowPulseDirection);
 
   return canvasToPngBytes(canvas);
 }

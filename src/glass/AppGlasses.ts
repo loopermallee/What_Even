@@ -5,7 +5,12 @@ import type { BridgePagePayload } from '../bridge/startupLifecycle';
 import type { CodecImageRenderRequest } from '../codecGlassesAssets';
 import { CreateStartUpPageContainer, TextContainerProperty } from '@evenrealities/even_hub_sdk';
 import { selectActionItemsForGlasses, selectGlassPortraitState, selectGlassScreenView } from './selectors';
-import { GLASSES_CONTAINERS, type GlassPortraitState } from './shared';
+import {
+  GLASSES_CONTAINERS,
+  type GlassArrowPulseDirection,
+  type GlassPortraitState,
+  type GlassScreenView,
+} from './shared';
 
 export type InputHandleResult = {
   changed: boolean;
@@ -15,13 +20,21 @@ export type InputHandleResult = {
 export class AppGlasses {
   private readonly store: AppStore;
   private readonly cursorBlinkIntervalMs = 520;
+  private readonly arrowPulseDurationMs = 210;
+  private readonly scriptedSignalTickMs = 170;
+  private arrowPulseDirection: GlassArrowPulseDirection = 'none';
+  private arrowPulseExpiresAt = 0;
 
   constructor(store: AppStore) {
     this.store = store;
   }
 
   private getView() {
-    return selectGlassScreenView(this.store.getState());
+    const view = selectGlassScreenView(this.store.getState());
+    return {
+      ...view,
+      arrowPulseDirection: this.getActiveArrowPulseDirection(),
+    } as GlassScreenView;
   }
 
   getPortraitState(): GlassPortraitState {
@@ -42,6 +55,8 @@ export class AppGlasses {
     }
 
     const portraitState = this.getPortraitState();
+    const now = Date.now();
+    const barBucket = this.resolveCenterSignalBarBucket(portraitState, now);
 
     requests.push(
       {
@@ -60,12 +75,14 @@ export class AppGlasses {
         containerName: GLASSES_CONTAINERS.centerImage.name,
         syncKey: JSON.stringify({
           variant: view.centerModuleVariant,
-          barBucket: portraitState.barBucket,
+          barBucket,
+          arrowPulseDirection: view.arrowPulseDirection,
         }),
         request: {
           kind: 'center-module',
           variant: view.centerModuleVariant,
-          barBucket: portraitState.barBucket,
+          barBucket,
+          arrowPulseDirection: view.arrowPulseDirection,
         },
       },
       {
@@ -99,14 +116,29 @@ export class AppGlasses {
         content: view.topRowText || ' ',
       },
       {
+        containerID: GLASSES_CONTAINERS.centerTopLabelText.id,
+        containerName: GLASSES_CONTAINERS.centerTopLabelText.name,
+        content: view.centerTopLabelText || ' ',
+      },
+      {
         containerID: GLASSES_CONTAINERS.centerReadoutText.id,
         containerName: GLASSES_CONTAINERS.centerReadoutText.name,
         content: view.centerReadoutText || ' ',
       },
       {
+        containerID: GLASSES_CONTAINERS.centerBottomLabelText.id,
+        containerName: GLASSES_CONTAINERS.centerBottomLabelText.name,
+        content: view.centerBottomLabelText || ' ',
+      },
+      {
         containerID: GLASSES_CONTAINERS.dialogueText.id,
         containerName: GLASSES_CONTAINERS.dialogueText.name,
         content: view.subtitleText || ' ',
+      },
+      {
+        containerID: GLASSES_CONTAINERS.horizontalActionsText.id,
+        containerName: GLASSES_CONTAINERS.horizontalActionsText.name,
+        content: view.horizontalActionsText || ' ',
       },
     ];
   }
@@ -134,9 +166,34 @@ export class AppGlasses {
     return this.cursorBlinkIntervalMs;
   }
 
+  getAnimationTickDelayMs() {
+    const now = Date.now();
+    const pulseRemainingMs = this.arrowPulseExpiresAt - now;
+    if (this.getActiveArrowPulseDirection(now) !== 'none' && pulseRemainingMs > 0) {
+      return Math.min(95, pulseRemainingMs);
+    }
+
+    const view = this.getView();
+    if (!view.showPortrait) {
+      return null;
+    }
+
+    const portraitState = this.getPortraitState();
+    if (this.isScriptedSignalAnimating(portraitState, now)) {
+      return this.scriptedSignalTickMs;
+    }
+
+    return null;
+  }
+
   handleNormalizedInput(input: NormalizedInput, inspection: RawEventDebugInfo): InputHandleResult {
     const previousState = this.store.getState();
     this.store.setLastInput(input, inspection);
+    if (input === 'UP') {
+      this.armArrowPulse('left');
+    } else if (input === 'DOWN') {
+      this.armArrowPulse('right');
+    }
     const resolvedSelectionIndex = this.resolveListSelectionIndex(inspection);
     if (
       resolvedSelectionIndex !== null &&
@@ -604,8 +661,11 @@ export class AppGlasses {
   private buildTextContainers() {
     return [
       this.buildTopRowTextContainer(),
+      this.buildCenterTopLabelTextContainer(),
       this.buildCenterReadoutTextContainer(),
+      this.buildCenterBottomLabelTextContainer(),
       this.buildSubtitleTextContainer(),
+      this.buildHorizontalActionsTextContainer(),
     ];
   }
 
@@ -625,10 +685,10 @@ export class AppGlasses {
     const actions = this.getActionItems();
     const safeActions = actions.length > 0 ? actions : [' '];
     return {
-      xPosition: 196,
-      yPosition: 252,
-      width: 184,
-      height: 30,
+      xPosition: 548,
+      yPosition: 264,
+      width: 20,
+      height: 18,
       borderWidth: 0,
       borderColor: 0,
       borderRadius: 0,
@@ -639,7 +699,7 @@ export class AppGlasses {
         itemCount: safeActions.length,
         itemName: safeActions,
         itemWidth: 0,
-        isItemSelectBorderEn: 1,
+        isItemSelectBorderEn: 0,
       },
       isEventCapture: 1,
     };
@@ -666,13 +726,49 @@ export class AppGlasses {
   private buildCenterReadoutTextContainer() {
     const view = this.getView();
     return {
-      xPosition: 184,
-      yPosition: 94,
-      width: 208,
-      height: 28,
+      xPosition: 228,
+      yPosition: 82,
+      width: 126,
+      height: 24,
       containerID: GLASSES_CONTAINERS.centerReadoutText.id,
       containerName: GLASSES_CONTAINERS.centerReadoutText.name,
       content: view.centerReadoutText || ' ',
+      isEventCapture: 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
+    };
+  }
+
+  private buildCenterTopLabelTextContainer() {
+    const view = this.getView();
+    return {
+      xPosition: 260,
+      yPosition: 8,
+      width: 64,
+      height: 16,
+      containerID: GLASSES_CONTAINERS.centerTopLabelText.id,
+      containerName: GLASSES_CONTAINERS.centerTopLabelText.name,
+      content: view.centerTopLabelText || ' ',
+      isEventCapture: 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
+    };
+  }
+
+  private buildCenterBottomLabelTextContainer() {
+    const view = this.getView();
+    return {
+      xPosition: 246,
+      yPosition: 124,
+      width: 84,
+      height: 16,
+      containerID: GLASSES_CONTAINERS.centerBottomLabelText.id,
+      containerName: GLASSES_CONTAINERS.centerBottomLabelText.name,
+      content: view.centerBottomLabelText || ' ',
       isEventCapture: 0,
       borderWidth: 0,
       borderColor: 0,
@@ -687,11 +783,29 @@ export class AppGlasses {
       xPosition: 36,
       yPosition: 170,
       width: 504,
-      height: 80,
+      height: 74,
       containerID: GLASSES_CONTAINERS.dialogueText.id,
       containerName: GLASSES_CONTAINERS.dialogueText.name,
       content: view.subtitleText || ' ',
       isEventCapture: view.captureSurfaceMode === 'text' ? 1 : 0,
+      borderWidth: 0,
+      borderColor: 0,
+      borderRadius: 0,
+      paddingLength: 0,
+    };
+  }
+
+  private buildHorizontalActionsTextContainer() {
+    const view = this.getView();
+    return {
+      xPosition: 28,
+      yPosition: 250,
+      width: 520,
+      height: 30,
+      containerID: GLASSES_CONTAINERS.horizontalActionsText.id,
+      containerName: GLASSES_CONTAINERS.horizontalActionsText.name,
+      content: view.horizontalActionsText || ' ',
+      isEventCapture: 0,
       borderWidth: 0,
       borderColor: 0,
       borderRadius: 0,
@@ -751,5 +865,52 @@ export class AppGlasses {
       resolvedIndex !== null &&
       this.isValidContactsIndex(resolvedIndex)
     );
+  }
+
+  private armArrowPulse(direction: Exclude<GlassArrowPulseDirection, 'none'>) {
+    this.arrowPulseDirection = direction;
+    this.arrowPulseExpiresAt = Date.now() + this.arrowPulseDurationMs;
+  }
+
+  private getActiveArrowPulseDirection(now = Date.now()): GlassArrowPulseDirection {
+    if (this.arrowPulseDirection === 'none') {
+      return 'none';
+    }
+
+    if (now >= this.arrowPulseExpiresAt) {
+      this.arrowPulseDirection = 'none';
+      return 'none';
+    }
+
+    return this.arrowPulseDirection;
+  }
+
+  private clampSignalBarBucket(bucket: number) {
+    return Math.max(0, Math.min(10, Math.round(bucket)));
+  }
+
+  private isScriptedSignalAnimating(portraitState: GlassPortraitState, now: number) {
+    if (portraitState.signalAnimationMode !== 'scripted_text') {
+      return false;
+    }
+
+    const elapsedMs = now - portraitState.scriptedSignalStartedAt;
+    return elapsedMs >= 0 && elapsedMs < portraitState.scriptedSignalDurationMs;
+  }
+
+  private resolveCenterSignalBarBucket(portraitState: GlassPortraitState, now: number) {
+    if (!this.isScriptedSignalAnimating(portraitState, now)) {
+      return portraitState.barBucket;
+    }
+
+    const elapsedMs = Math.max(0, now - portraitState.scriptedSignalStartedAt);
+    const progress = Math.min(1, elapsedMs / Math.max(1, portraitState.scriptedSignalDurationMs));
+    const base = Math.max(2, portraitState.barBucket);
+    const seed = portraitState.scriptedSignalSeed % 97;
+    const waveA = Math.sin((elapsedMs / 160) + seed * 0.21);
+    const waveB = Math.sin((elapsedMs / 96) + seed * 0.11) * 0.65;
+    const envelope = 1.35 - progress * 0.7;
+    const variation = Math.round((waveA + waveB) * 2.2 * envelope + 1.3);
+    return this.clampSignalBarBucket(base + variation);
   }
 }

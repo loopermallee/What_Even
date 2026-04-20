@@ -13,6 +13,8 @@ export type PortraitAsset =
 export type GlassPresentationMode = 'compact' | 'read';
 export type GlassLiveLineKind = 'none' | 'contact' | 'user';
 export type GlassPortraitExpressionBucket = 'default' | 'alert';
+export type GlassArrowPulseDirection = 'none' | 'left' | 'right';
+export type GlassSignalAnimationMode = 'idle' | 'live_audio' | 'scripted_text';
 
 export const GLASSES_CONTAINERS = {
   startupHeaderText: { id: 91, name: 'boot-head' },
@@ -25,6 +27,9 @@ export const GLASSES_CONTAINERS = {
   rightPortraitImage: { id: 106, name: 'codec-user' },
   topRowText: { id: 107, name: 'codec-top' },
   centerReadoutText: { id: 108, name: 'codec-read' },
+  centerTopLabelText: { id: 109, name: 'codec-ptt' },
+  centerBottomLabelText: { id: 110, name: 'codec-memo' },
+  horizontalActionsText: { id: 111, name: 'codec-act' },
 } as const;
 
 // Keep this tunable: perceived fit can differ a bit between the simulator and real G2 hardware.
@@ -52,6 +57,9 @@ export type GlassScreenView = {
   topRowText: string;
   centerReadoutText: string;
   subtitleText: string;
+  centerTopLabelText: string;
+  centerBottomLabelText: string;
+  horizontalActionsText: string;
   actions: string[];
   selectedActionIndex: number;
   mode: GlassPresentationMode;
@@ -62,6 +70,7 @@ export type GlassScreenView = {
   centerModuleVariant: GlassCenterModuleVariant;
   actionMode: GlassActionMode;
   captureSurfaceMode: GlassCaptureSurfaceMode;
+  arrowPulseDirection: GlassArrowPulseDirection;
 };
 
 export type GlassPortraitState = {
@@ -76,6 +85,10 @@ export type GlassPortraitState = {
   leftActive: boolean;
   rightActive: boolean;
   barBucket: number;
+  signalAnimationMode: GlassSignalAnimationMode;
+  scriptedSignalStartedAt: number;
+  scriptedSignalDurationMs: number;
+  scriptedSignalSeed: number;
   stateLabel: string;
   speakerLabel: string;
   frequency: string;
@@ -250,6 +263,28 @@ export function toSubtitleLines(content: string, maxCharsPerLine = 30, maxLines 
     .slice(0, maxLines);
 }
 
+export function formatHorizontalActions(actions: string[], selectedIndex: number, maxChars = 70) {
+  if (actions.length === 0) {
+    return ' ';
+  }
+
+  const safeIndex = Math.max(0, Math.min(selectedIndex, actions.length - 1));
+  const normalized = actions.map((action) => normalizeCodecText(action).toUpperCase() || '?');
+  const withHighlight = normalized.map((action, index) => (index === safeIndex ? `[${action}]` : action));
+  const joined = withHighlight.join('  ');
+  if (joined.length <= maxChars) {
+    return joined;
+  }
+
+  const previous = withHighlight[(safeIndex - 1 + withHighlight.length) % withHighlight.length];
+  const current = withHighlight[safeIndex];
+  const next = withHighlight[(safeIndex + 1) % withHighlight.length];
+  const compact = withHighlight.length > 1
+    ? `◀ ${previous}  ${current}  ${next} ▶`
+    : current;
+  return fitCodecLine(compact, maxChars);
+}
+
 function getPortraitAssetForCharacterId(characterId: CodecCharacterId): PortraitAssetBase {
   if (characterId === 'colonel') {
     return 'portrait-colonel';
@@ -360,6 +395,30 @@ function clampBarBucket(bucket: number) {
   return Math.max(0, Math.min(10, Math.round(bucket)));
 }
 
+function getActiveScriptedEntry(state: AppState) {
+  if (state.activeTranscriptCursor >= 0) {
+    const focused = state.transcript[state.activeTranscriptCursor] ?? null;
+    if (focused && (focused.role === 'contact' || focused.role === 'system')) {
+      return focused;
+    }
+  }
+
+  if (state.speechWindow.source === 'scripted_text' && state.speechWindow.entryId !== null) {
+    for (let index = state.transcript.length - 1; index >= 0; index -= 1) {
+      const entry = state.transcript[index];
+      if (entry.id === state.speechWindow.entryId) {
+        return entry;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getScriptedSignalDurationMs(lineLength: number) {
+  return Math.max(1000, Math.min(5200, 900 + Math.round(lineLength * 44)));
+}
+
 export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
   const scene = resolveCodecPortraitState(state);
   const contact = getSelectedContact(state);
@@ -371,9 +430,24 @@ export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
   const rightPortraitAsset = appendExpressionBucketToAsset(rightPortraitBase, rightExpressionBucket);
   const isTalking = scene.talkingMode !== 'silent' && scene.currentRole !== 'system';
   const liveAudioBucket = clampBarBucket(3 + Math.round(scene.listeningActivityLevel * 5));
-  const barBucket = scene.talkingMode === 'live_audio'
+  const scriptedEntry = getActiveScriptedEntry(state);
+  const scriptedSignalSeed = scriptedEntry
+    ? scriptedEntry.id
+    : scene.currentLine.length + contact.name.length;
+  const scriptedSignalStartedAt = scriptedEntry?.createdAt ?? state.responseStatusTimestamp ?? state.lastTranscriptAt ?? 0;
+  const scriptedSignalDurationMs = getScriptedSignalDurationMs(scene.currentLine.length);
+  const signalAnimationMode: GlassSignalAnimationMode = scene.talkingMode === 'live_audio'
+    ? 'live_audio'
+    : (
+      scene.talkingMode === 'scripted_text' &&
+      scene.activeSpeakerSide === 'left' &&
+      (scene.currentRole === 'contact' || scene.currentRole === 'system')
+    )
+      ? 'scripted_text'
+      : 'idle';
+  const barBucket = signalAnimationMode === 'live_audio'
     ? liveAudioBucket
-    : clampBarBucket(scene.signalBarBase + (isTalking ? 1 : 0));
+    : clampBarBucket(scene.signalBarBase + (signalAnimationMode === 'scripted_text' || isTalking ? 1 : 0));
 
   return {
     leftPortraitAsset,
@@ -387,9 +461,13 @@ export function resolveGlassPortraitState(state: AppState): GlassPortraitState {
     leftActive: scene.left.active,
     rightActive: scene.right.active,
     barBucket,
+    signalAnimationMode,
+    scriptedSignalStartedAt,
+    scriptedSignalDurationMs,
+    scriptedSignalSeed,
     stateLabel: scene.stateLabel,
     speakerLabel: scene.speakerLabel,
     frequency: contact.frequency,
-    syncKey: `${leftPortraitAsset}:${rightPortraitAsset}:${scene.activeSpeakerSide ?? 'none'}:${barBucket}:${scene.stateLabel}`,
+    syncKey: `${leftPortraitAsset}:${rightPortraitAsset}:${scene.activeSpeakerSide ?? 'none'}:${barBucket}:${scene.stateLabel}:${signalAnimationMode}:${scriptedSignalSeed}:${scriptedSignalStartedAt}:${scriptedSignalDurationMs}`,
   };
 }

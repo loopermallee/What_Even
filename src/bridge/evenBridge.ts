@@ -149,6 +149,7 @@ export class EvenBridgeApp {
   private imageQueue: SerializedImageQueue | null = null;
   private startupLifecycle: StartupLifecycleManager | null = null;
   private glassesSyncTimer: number | null = null;
+  private animationTickTimer: number | null = null;
   private cursorBlinkTimer: number | null = null;
   private draftVisibilityTimer: number | null = null;
   private captureProgressTimer: number | null = null;
@@ -903,6 +904,10 @@ export class EvenBridgeApp {
       window.clearTimeout(this.glassesSyncTimer);
       this.glassesSyncTimer = null;
     }
+    if (this.animationTickTimer !== null) {
+      window.clearTimeout(this.animationTickTimer);
+      this.animationTickTimer = null;
+    }
     if (this.cursorBlinkTimer !== null) {
       window.clearInterval(this.cursorBlinkTimer);
       this.cursorBlinkTimer = null;
@@ -1320,6 +1325,16 @@ export class EvenBridgeApp {
     await this.syncText();
     await this.syncImages(forceImages);
 
+    const animationTickDelayMs = this.glasses.getAnimationTickDelayMs();
+    if (animationTickDelayMs === null) {
+      if (this.animationTickTimer !== null) {
+        window.clearTimeout(this.animationTickTimer);
+        this.animationTickTimer = null;
+      }
+    } else {
+      this.scheduleAnimationTickSync(animationTickDelayMs);
+    }
+
     const seedIndex = this.glasses.getActionSeedIndex();
     if (seedIndex !== null) {
       this.normalizer.seedListIndex(
@@ -1329,6 +1344,19 @@ export class EvenBridgeApp {
       );
     }
     this.suppressSimulatorUnknownTapUntil = Date.now() + this.simulatorUnknownTapSuppressMs;
+  }
+
+  private scheduleAnimationTickSync(delayMs: number) {
+    const boundedDelayMs = Math.max(24, Math.min(220, Math.round(delayMs)));
+    if (this.animationTickTimer !== null) {
+      window.clearTimeout(this.animationTickTimer);
+      this.animationTickTimer = null;
+    }
+
+    this.animationTickTimer = window.setTimeout(() => {
+      this.animationTickTimer = null;
+      this.scheduleSync(false);
+    }, boundedDelayMs);
   }
 
   private async syncText(options?: { quiet?: boolean }) {

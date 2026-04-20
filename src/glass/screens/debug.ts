@@ -1,7 +1,8 @@
 import type { AppState } from '../../app/types';
-import { toSubtitleLines, wrapText, type GlassScreenView } from '../shared';
+import { formatHorizontalActions, toSubtitleLines, wrapText, type GlassScreenView } from '../shared';
 
 export function buildDebugScreen(state: AppState): GlassScreenView {
+  const actions = ['Exit Debug'];
   const raw = state.lastRawEvent;
   const subtitleText = toSubtitleLines(
     `Input ${state.lastNormalizedInput ?? 'none'}. Raw ${(raw?.rawEventTypeName ?? 'none').slice(0, 24)}.`,
@@ -21,7 +22,10 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
     topRowText: 'DEBUG  INSPECTOR  DEV',
     centerReadoutText: `SCREEN ${state.screenBeforeDebug.toUpperCase()}`,
     subtitleText,
-    actions: ['Exit Debug'],
+    centerTopLabelText: 'PTT',
+    centerBottomLabelText: 'MEMORY',
+    horizontalActionsText: formatHorizontalActions(actions, 0),
+    actions,
     selectedActionIndex: 0,
     mode: 'compact',
     liveLineKind: 'none',
@@ -30,5 +34,6 @@ export function buildDebugScreen(state: AppState): GlassScreenView {
     centerModuleVariant: 'debug',
     actionMode: 'hidden-list',
     captureSurfaceMode: 'list',
+    arrowPulseDirection: 'none',
   };
 }
